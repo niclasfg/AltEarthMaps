@@ -1,193 +1,130 @@
-# WORLD TERRAIN 2.0 — Python 3.11+: python terrain.py
-# No pip packages. The browser's WebGL2 GPU generates the map.
-# Edit, save, REFRESH the browser. Restart Python only after changing the port.
-# All distances and elevations in this file are METRES. Temperatures are °C.
-# Array entries with the same index describe the SAME layer. A one-value array
-# broadcasts to all layers in that section. Lists may have up to 24 layers.
-# Increasing scale does not add amplitude automatically: both are explicit.
-# This is procedural geography and ecology, NOT a tectonic/climate simulator.
+# GLOBE TERRAIN 3.0
+# Run: python -m pip install -r requirements.txt ; python terrain.py
+# Distances below are METRES. Heights are relative to sea level.
+# Save settings, STOP and RESTART Python. A changed planet setting rebuilds the
+# small global guide maps; no change requires generating the planet at 1 m.
+# This is a static procedural geological model, not a plate-evolution simulation.
 
 [viewer]
-port = 8768
+port = 8769
 open_browser = true
-start_x_metres = 0.0
-start_y_metres = 0.0
-view_width_metres = 3500000.0       # Start with land AND ocean, not a tiny mountaintop.
-min_view_width_metres = 120.0
-max_view_width_metres = 30000000.0
-max_render_width = 1440            # Increase to your screen width for fine detail.
-interactive_scale = 0.55           # Fewer pixels while dragging; NOT a new world seed.
-settle_ms = 180
-supersampling = 1                  # 1 or 2. 2 = 4 height samples per output pixel.
+start_longitude_degrees = -96.0
+start_latitude_degrees = -3.0
+view_width_metres = 23000000.0     # Orthographic span; globe diameter is 12,742 km.
+min_view_width_metres = 160.0      # Around 0.1 m/pixel on a 1600-pixel display.
+max_render_width = 1600           # Set to physical screen width for sharp pixels.
+interactive_scale = 0.55          # Fewer pixels ONLY while moving, not different terrain.
+settle_ms = 170
+supersampling = 1                 # 1 or 2. 2 evaluates four times as many pixels.
 
-[world]
-seed = 1977                       # Changes continents, Voronoi cells AND small detail.
-sea_level_metres = 0.0             # Actual common sea surface, not a colour threshold.
-# Noise here defines coarse controls, NOT the final mountain shapes.
-# Positive coarse elevations are compressed into broad lowlands; mountains are
-# added by landform provinces and Runevision erosion. Negative values form sea.
-land_vertical_scale = 0.18
-sea_vertical_scale = 1.40
-continental_bias_metres = -450.0   # More negative -> more ocean. NOT % land.
-coast_uplift_fade_metres = 850.0    # Raw continental-height band suppressing uplift near sea.
+[planet]
+seed = 1977
+radius_metres = 6371000.0         # Spherical mean Earth radius, not an ellipsoid.
+land_fraction = 0.31              # Area-weighted target before mountain uplift.
+map_width = 2048                  # Global guide: width x width/2; NOT final resolution.
+# Shared crust fields make continents; plate polygons NEVER each become islands.
+continent_wavelength_metres = [16000000, 8000000, 4000000, 2000000, 1000000, 450000, 180000]
+continent_amplitude = [0.5, 0.75, 0.70, 0.35, 0.12, 0.04, 0.008]
+lowland_height_metres = 620.0
+abyss_depth_metres = 5100.0
+shelf_width_metres = 160000.0
 
-[continents]
-# Add a new leading wavelength/amplitude to get an even larger scale of land.
-# Layers use distinct rotations and coordinate offsets, not copied island shapes.
-wavelength_metres = [3400000, 1400000, 570000, 210000, 72000, 24000, 8000]
-amplitude_metres = [11000, 4200, 1450, 420, 115, 28, 7]
-rotation_degrees = [17, 63, -29, 111, 43, -71, 9]
-warp_wavelength_metres = 1100000.0
-warp_metres = 180000.0             # Smooth deformation of the continental control field.
-
-[provinces]
-# A jittered Voronoi tessellation supplies LAND-FORM parameters, not final biome
-# labels. Mountains can be tropical at their base and alpine at their summit.
-cell_metres = 240000.0
-blend_sharpness = 10.0             # Higher -> narrower transitions. Not hard borders.
-# A larger smooth field correlates the chance of mountain provinces. Adjacent
-# climate remains continuous even when neighbouring geological provinces differ.
-orogeny_wavelength_metres = 850000.0
-# Five columns below correspond to these five profiles, NOT erosion levels.
-names = ["plain", "rolling", "old mountains", "alpine", "plateau"]
-relief_multiplier = [0.035, 0.32, 1.05, 3.5, 0.22]
-uplift_metres = [0, 90, 450, 3100, 1700]
-ridge_rounding = [0.32, 0.23, 0.16, 0.035, 0.22]
-# Random variation around a selected profile. It is blended spatially, never
-# chosen per render tile. Keep modest to preserve the distinctions above.
-parameter_jitter = 0.18
-
-[relief]
-# The positive/negative height fluctuations below sit on the province uplift.
-# Province relief_multiplier scales these amplitudes. Runevision's filter then
-# turns the smooth input into dissected slopes and nested gullies.
-wavelength_metres = [65000, 22000, 7000, 2400, 800]
-amplitude_metres = [650, 650, 1350, 100, 12]
-rotation_degrees = [23, -37, 0, 51, -11]
-
-[erosion]
-# Vectorized Runevision filter: ONE persistent gully-direction accumulator and
-# mask recurrence across this entire list. NOT separately restarted octaves.
-# Each row index means: wavelength, displacement amplitude, and shape controls.
-# First 8 levels dissect mountain slopes. Last 7 continue to metre/sub-metre
-# ground. Add levels rather than rescaling all mountains when zooming in.
-wavelength_metres = [6000, 3000, 1500, 750, 375, 187.5, 93.75, 46.875, 24, 12, 6, 3, 1.5, 0.75, 0.375]
-amplitude_metres = [750, 375, 187.5, 93.75, 46.875, 23.4, 11.7, 5.86, 2.4, 1.2, 0.60, 0.30, 0.15, 0.075, 0.0375]
-gully_weight = [0.50, 0.50, 0.50, 0.52, 0.55, 0.58, 0.60, 0.62, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65]
-detail = [1.5]                     # Broadcast. Higher permits more fine gullies.
-ridge_rounding = [0.1, 0.12, 0.14, 0.16, 0.18, 0.18, 0.16, 0.14, 0.10, 0.08, 0.06, 0.05, 0.04, 0.03, 0.025]
-crease_rounding = [0.0]
-onset = [1.25]
-cell_scale = [0.7]                 # Changes random-cell size, not stripe wavelength.
-normalization = [0.5]              # Avoid approaching 1: loops/singular-looking shapes.
-initial_onset = 1.25
-initial_rounding_multiplier = 0.1
-ridge_map_onset = 2.8
-ridge_map_octave_onset = 1.5
-assumed_slope = 0.7
-assumed_slope_weight = 1.0
-height_offset = -0.25              # Lower/raise proportionally to total displacement.
-# These arrays are an adaptation of the reference recurrence. They are not the
-# original five-octave demonstration preset. No false claim of pixel identity.
+[tectonics]
+plate_count = 22
+# Plates are spherical Voronoi regions with seeded Euler-rotation velocities.
+# Relative convergence raises NARROW BELTS around connected boundaries; divergent
+# ocean boundaries form submarine ridges. The interiors are not lifted polygons.
+# Vectors below: core range, foothill belt, outer foreland. Explicit independent
+# cross-belt distances and amplitudes, rather than giant uniform alpine blobs.
+belt_width_metres = [85000, 190000, 410000]
+belt_height_metres = [4200, 1900, 300]
+convergence_threshold = 0.12
+boundary_warp_metres = 190000.0
+boundary_warp_wavelength_metres = 1100000.0
+range_along_variation_metres = 480000.0
+ridge_height_metres = 2000.0       # Oceanic spreading ridge, normally stays underwater.
+trench_depth_metres = 2200.0
 
 [climate]
-# Shared continuous fields determine sea-level temperature and rainfall.
-# The endless plane has correlated climate zones, NOT repeating latitude stripes.
-# Changing climate changes dunes and vegetation; it does not move continents.
-temperature_wavelength_metres = [2500000, 1000000, 420000]
-temperature_amplitude_c = [72, 18, 4]
-sea_level_mean_c = 13.0
-lapse_c_per_km = 6.0                # Local T = sea-level T - lapse * elevation / 1000.
-# Rainfall is log-normal: exponentiate mean_log + sum(noise * amplitude).
-rain_wavelength_metres = [1700000, 620000, 190000]
-rain_log_amplitude = [4.5, 1.5, 0.35]
-mean_rainfall_mm = 1000.0
-minimum_rainfall_mm = 40.0
-maximum_rainfall_mm = 6500.0
-# Nearby cells have only SMALL climate offsets on top of the shared fields.
-cell_temperature_jitter_c = 1.5
-cell_rain_log_jitter = 0.12
-# Local corrections. The rain-shadow term is a wind/slope proxy, not CFD.
-wind_degrees = 25.0
-rain_shadow_strength = 0.55
-aspect_moisture_strength = 0.18
-slope_drying_strength = 0.30
-water_moisture_boost = 0.22
+equator_temperature_c = 28.0
+pole_temperature_drop_c = 48.0
+lapse_c_per_km = 6.0
+mean_rainfall_mm = 1200.0
+# Trade-wind dry belts, wet equatorial belt and temperate storm belts share
+# smooth fields; cells do not independently pick tropical or polar climates.
+regional_temperature_variation_c = 4.0
+regional_rainfall_variation = 0.8
+rain_shadow_strength = 0.8
 
-[ecology]
-# These constraints are evaluated AFTER elevation/erosion/dune/lake generation.
-# Slope in the ecology calculation is an estimated land slope, not canopy slope.
-# Exposed rock uses the final rasterized terrain normal as well.
-tree_temperature_min_c = 2.0
-tree_temperature_full_c = 9.0
-tree_slope_start_degrees = 24.0     # Forest begins thinning.
-tree_slope_end_degrees = 42.0       # No forest on near-cliffs.
-tree_aridity_min = 0.35
-tree_aridity_full = 1.1
-rock_slope_start_degrees = 28.0
-rock_slope_end_degrees = 52.0
-snow_temperature_full_c = -7.0
-snow_temperature_none_c = 1.0
-# Because T already includes elevation, there is no one global snow/treeline
-# height: a tropical mountain's snowline is higher than a cold region's.
+[hydrology]
+# Entire spherical guide grid is routed to ocean with Priority-Flood. Longitude
+# wraps; both polar caps have explicit adjacency. Area uses latitude weighting.
+# This builds major river topology ONCE, rather than drawing random blue gullies.
+enabled = true
+routing_width = 1024              # Must divide planet.map_width. ~39 km at equator.
+river_source_area_km2 = 35000.0     # Coarse major rivers, NOT local metre tributaries.
+width_coefficient_metres = 0.8    # Half-width = coefficient * sqrt(area in km²).
+maximum_half_width_metres = 1600.0
+valley_width_metres = 14000.0
+lake_minimum_depth_metres = 25.0
+lake_maximum_depth_metres = 500.0
+# Lakes are spill-level depressions in the global guide, not seeded circular bowls.
+
+[relief]
+# Small landform relief sits INSIDE the global long mountain belts. Values are
+# noise coefficients, not literal peak heights. Amplitudes are small on plains.
+wavelength_metres = [80000, 23000, 7500, 2500, 800]
+amplitude_metres = [1000, 1050, 680, 170, 30]
+plain_fraction = 0.025
+
+[erosion]
+# Runevision's fading-gully recurrence, adapted to three smoothly blended ECEF
+# projections. It has no longitude seam or polar chart singularity. Original
+# reference source is retained separately. These are vectorized parameters.
+# Each array has either one entry (broadcast) or one entry per wavelength.
+# Full terrain queries evaluate all layers. Display filters only accumulated
+# height, NEVER the internal gully-direction recurrence.
+wavelength_metres = [6200, 3100, 1550, 775, 387.5, 193.75, 96.875, 48.44, 24, 12, 6, 3, 1.5]
+amplitude_metres = [950, 475, 237.5, 118.75, 59.375, 29.6875, 14.84, 7.42, 3.4, 1.6, 0.74, 0.35, 0.16]
+gully_weight = [0.5]
+detail = [1.5]
+ridge_rounding = [0.075, 0.09, 0.105, 0.12, 0.12, 0.12, 0.1, 0.09, 0.08, 0.07, 0.055, 0.045, 0.035]
+crease_rounding = [0.0]
+onset = [1.25]
+cell_scale = [0.7]
+normalization = [0.5]
+assumed_slope = 0.7
+initial_rounding_multiplier = 0.1
+# Subpixel relief is filtered in presentation, not presented as equally bright
+# individual mountain-sized tree/shadow spots at continental distances.
 
 [dunes]
-# Real elevation displacement, restricted to warm dry low-slope sandy ground.
-# Shaped, wind-oriented Phacelle patterns. NOT Desertscape's aeolian simulation.
-wavelength_metres = [520, 135, 32, 7]
-amplitude_metres = [38, 8.5, 1.5, 0.20]
-cell_scale = [0.85]
-crest_fraction = [0.82]             # Broad windward slope, shorter steeper slip face.
-minimum_temperature_c = 10.0
-maximum_aridity = 0.45
-maximum_height_metres = 2300.0
-maximum_slope_degrees = 12.0
-sand_coverage = 0.85                # Not every desert is a dune field; rocky deserts remain.
+wavelength_metres = [500, 160, 45, 12, 3]
+amplitude_metres = [24, 6, 1.2, 0.22, 0.025]
+wind_degrees = 25.0
+maximum_slope_degrees = 9.0
 
-[lakes]
-# Sparse procedural basin features. Candidate cells only index centres; most are
-# rejected by land, elevation, slope and moisture. These are NOT tiled terrain.
-# Each accepted basin has one horizontal freshwater level, a depression and a
-# containing rim. Its shoreline follows the warped basin/terrain intersection.
-# This is a bounded geometric lake model, not catchment balance or river routing.
-enabled = true
-cell_metres = 60000.0
-probability = 0.35
-radius_metres = [1800, 11000]        # Min/max; elongated and warped, not identical discs.
-depth_metres = [18, 110]
-maximum_elevation_metres = 2200.0
-maximum_slope_degrees = 7.0
-minimum_aridity = 0.45
+[ecology]
+tree_slope_degrees = [24.0, 43.0]  # Full forest below first, no forest above second.
+rock_slope_degrees = [27.0, 52.0]
+snow_temperature_c = [-9.0, -1.0] # Full to none; also suppress snow on near-vertical rock.
 
 [appearance]
-# Colours are RGB in [0,1]. Classification uses temperature, moisture, height,
-# slope, aspect, landform and water, NOT a uniformly coloured Voronoi polygon.
-ocean_deep = [0.025, 0.075, 0.12]
-ocean_shallow = [0.025, 0.29, 0.31]
-lake_deep = [0.035, 0.16, 0.18]
-sand = [0.70, 0.51, 0.29]
-dry_soil = [0.43, 0.32, 0.22]
-grass = [0.22, 0.33, 0.10]
-forest = [0.075, 0.18, 0.065]
-tropical_forest = [0.06, 0.22, 0.075]
-boreal_forest = [0.08, 0.16, 0.125]
-tundra = [0.29, 0.28, 0.19]
-rock = [0.30, 0.28, 0.25]
-snow = [0.85, 0.90, 0.93]
-sun_direction = [-0.75, 0.60, 0.28] # x / up / north; steeper sun than old demo.
-shadows = true
-shadow_steps = 24
-canopy = true
-canopy_cell_metres = 12.0
-canopy_height_metres = 15.0
-# Surface material scales also have independently adjustable amplitude vectors.
-surface_wavelength_metres = [8, 3, 1, 0.35]
-surface_height_metres = [0.18, 0.09, 0.035, 0.008]
-surface_colour_strength = [0.18, 0.14, 0.09, 0.04]
-
-[coast]
-# Low-amplitude shoreline detail, restricted to a band near sea level. Changing
-# a small entry adds headlands/notches, not new continent-sized islands.
-wavelength_metres = [3500, 900, 220, 55, 14, 3.5]
-amplitude_metres = [18, 7, 2, 0.55, 0.12, 0.025]
-vertical_band_metres = 100.0
+# Muted reflectance colours. No extra high-contrast outline around every gully.
+# These approximate natural land cover, not photographs or cultivated land.
+ocean_deep = [0.065, 0.16, 0.31]
+ocean_shallow = [0.13, 0.37, 0.43]
+forest = [0.17, 0.28, 0.18]
+grass = [0.36, 0.41, 0.25]
+desert = [0.68, 0.57, 0.41]
+rock = [0.47, 0.43, 0.37]
+snow = [0.86, 0.88, 0.86]
+lake = [0.07, 0.23, 0.24]
+# Google-Earth-style bathymetric tint, NOT an optical view through deep seawater.
+bathymetry = true
+hillshade_strength = 0.45
+canopy_cell_metres = 11.0
+canopy_height_metres = 14.0
+# Fixed world-size reflectance patterns, averaged away before they become aliasing.
+surface_wavelength_metres = [150000, 40000, 10000, 3200, 600, 120, 25, 5, 1]
+surface_colour_strength = [0.12, 0.15, 0.13, 0.10, 0.09, 0.07, 0.09, 0.10, 0.035]

@@ -1,92 +1,74 @@
-// Physical-unit orthographic display. Biome appearance is a function of local
-// climate, bare-earth height, estimated ecological slope, actual surface slope,
-// aspect-adjusted moisture, water and sediment — not random polygon colours.
-uniform sampler2D uHeight;uniform sampler2D uClimate;uniform sampler2D uCover;
-uniform sampler2D uShadow;
-uniform vec2 uSize;uniform vec2 uOrigin;uniform float uPixel;
-uniform vec2 uShadowOrigin;uniform float uShadowPixel;uniform vec2 uShadowSize;
+uniform sampler2D uGround,uEnvironment,uWet;
+uniform vec2 uTargetSize;
 uniform float uBorder;
 out vec4 outColor;
-vec4 sampleMap(sampler2D t,vec2 q,vec2 size){
- vec2 v=q-.5;ivec2 i=ivec2(floor(v)),hi=ivec2(size)-1;vec2 f=fract(v);
- return mix(mix(texelFetch(t,clamp(i,ivec2(0),hi),0),texelFetch(t,clamp(i+ivec2(1,0),ivec2(0),hi),0),f.x),
-            mix(texelFetch(t,clamp(i+ivec2(0,1),ivec2(0),hi),0),texelFetch(t,clamp(i+ivec2(1),ivec2(0),hi),0),f.x),f.y);
-}
-float contextHeight(vec2 p){
- vec2 uv=(p-uOrigin)/uPixel;
- if(all(greaterThanEqual(uv,vec2(1)))&&all(lessThan(uv,uSize-1.)))return sampleMap(uHeight,uv,uSize).x;
- return sampleMap(uShadow,(p-uShadowOrigin)/uShadowPixel,uShadowSize).x;
-}
-float shadow(vec2 p,float h,vec3 sun){
- if(!A_SHADOWS)return 1.;
- float v=1.,d=max(.003,uPixel*1.7);
- for(int i=0;i<A_SHADOW_STEPS;i++){
-  float clear=h+sun.y*d-contextHeight(p+sun.xz*d);
-  v=min(v,clamp01(16.*(clear+uPixel*.8)/d));d=d*1.27+.003;
-  if(d>35.||v<=0.)break;
- }
- return v;
-}
+vec4 ground(ivec2 p){return texelFetch(uGround,clamp(p,ivec2(0),textureSize(uGround,0)-1),0);}
 void main(){
- vec2 q=gl_FragCoord.xy+uBorder,p=uOrigin+q*uPixel;
- vec4 h=sampleMap(uHeight,q,uSize),cl=sampleMap(uClimate,q,uSize),cov=sampleMap(uCover,q,uSize);
- float dx=(sampleMap(uHeight,q+vec2(1,0),uSize).x-sampleMap(uHeight,q-vec2(1,0),uSize).x)/(2.*uPixel);
- float dy=(sampleMap(uHeight,q+vec2(0,1),uSize).x-sampleMap(uHeight,q-vec2(0,1),uSize).x)/(2.*uPixel);
- float ex=(sampleMap(uHeight,q+vec2(1,0),uSize).y-sampleMap(uHeight,q-vec2(1,0),uSize).y)/(2.*uPixel);
- float ey=(sampleMap(uHeight,q+vec2(0,1),uSize).y-sampleMap(uHeight,q-vec2(0,1),uSize).y)/(2.*uPixel);
- vec3 normal=normalize(vec3(-dx,1,-dy));
- float actualSlope=length(vec2(ex,ey));
- bool water=cl.w>h.y;
- vec3 colour;float specular=0.;
- if(water){
-  float depth=cl.w-h.y;
-  float shallow=exp(-depth/(cl.w>W_SEA_LEVEL_METRES+.001?.012:.040));
-  colour=mix(cl.w>W_SEA_LEVEL_METRES+.001?A_LAKE_DEEP:A_OCEAN_DEEP,A_OCEAN_SHALLOW,shallow);
-  float ice=ramp(-1.,-9.,cl.x);colour=mix(colour,A_SNOW*.82,ice);
-  normal=vec3(0,1,0);specular=.06*(1.-ice);
- }else{
-  float t=cl.x,a=cl.y,forest=cov.x;
-  float dryness=1.-ramp(.25,.9,a),cold=1.-ramp(-4.,8.,t);
-  float tropical=ramp(18.,27.,t)*ramp(.8,1.6,a);
-  vec3 tree=mix(A_FOREST,A_TROPICAL_FOREST,tropical);
-  tree=mix(tree,A_BOREAL_FOREST,ramp(13.,3.,t));
-  vec3 base=mix(A_DRY_SOIL,A_GRASS,ramp(.20,.80,a));
-  base=mix(base,A_TUNDRA,cold);
-  base=mix(base,A_SAND,dryness*ramp(4.,18.,t));
-  // Correct area-averaged forest colour at continental scale; actual crowns at
-  // close scale. No tiny crowns sampled every kilometre and painted as giant trees.
-  float resolved=1.-ramp(.0025,.008,uPixel);
-  float cover=mix(forest,ramp(.02,.12,cov.y),resolved);
-  base=mix(base,tree,cover*.92);
-  float rock=ramp(tan(radians(EC_ROCK_SLOPE_START_DEGREES)),tan(radians(EC_ROCK_SLOPE_END_DEGREES)),max(actualSlope,cov.z));
-  rock=max(rock,(1.-ramp(-8.,4.,t))*.6*(1.-forest));
-  base=mix(base,A_ROCK,rock*(1.-cl.z));
-  base=mix(base,A_SAND,cl.z);
-  float grain=nd(p,MATERIAL_ID).x;
-  base*=1.+.10*grain;
-  vec3 micro=vec3(0);float variation=0.;
-  for(int i=0;i<S_N;i++){
-   float w=1.-ramp(.18,.5,uPixel/L_SCALE[S_IDS[i]]);
-   if(w<=0.)continue;
-   vec3 n=nd(p,S_IDS[i]);micro+=n*S_HEIGHT[i]*w;variation+=n.x*S_COLOUR[i]*w;
-  }
-  float materialBump=mix(.30,1.,rock)*(1.-cover*.7);
-  normal=normalize(vec3(-dx-micro.y*materialBump,1.,-dy-micro.z*materialBump));
-  base*=1.+variation;
-  float snow=ramp(EC_SNOW_TEMPERATURE_NONE_C,EC_SNOW_TEMPERATURE_FULL_C,t);
-  // Steep faces retain exposed rock through snow; no blanket snow paint cliffs.
-  snow*=mix(1.,.45,ramp(.6,1.8,actualSlope));base=mix(base,A_SNOW,snow);
-  float shore=exp(-max(0.,h.y-W_SEA_LEVEL_METRES)/.008)*(1.-ramp(.05,.5,actualSlope));
-  base=mix(base,A_SAND,shore*(1.-snow));
-  colour=base;
+ vec3 n,p;float facing;
+ if(!locate(gl_FragCoord.xy,n,p,facing)){
+  vec2 xy=(gl_FragCoord.xy/uSize-.5)*vec2(uSpan,uSpan*uSize.y/uSize.x);float r=length(xy)/RADIUS;
+  vec3 space=vec3(.017,.026,.044);space+=vec3(.06,.14,.24)*exp(-max(0.,r-1.)*105.);
+  outColor=vec4(space,1);return;
  }
- vec3 sun=normalize(A_SUN_DIRECTION);float sh=shadow(p,h.x,sun);
- float diffuse=max(0.,dot(normal,sun));
- // Matte, broad ambient illumination. Do not turn small gullies into white
- // 'rivers'; this version makes no claim of global flow-routed river networks.
- vec3 lit=colour*(vec3(.40,.44,.49)+vec3(1.30,1.24,1.15)*diffuse*mix(.18,1.,sh));
- if(water)lit+=specular*pow(max(0.,dot(reflect(-sun,normal),vec3(0,1,0))),60.);
- // Display transfer only. No local-contrast enhancement or sharpening.
- lit=pow(max(lit,vec3(0)),vec3(1./2.2));
- outColor=vec4(clamp(lit,0.,1.),1.);
+ ivec2 q=ivec2(gl_FragCoord.xy)+ivec2(int(uBorder));vec4 a=ground(q);
+ vec4 env=texelFetch(uEnvironment,q,0),wet=texelFetch(uWet,q,0);
+ float fp=uPixel/max(.09,facing);float h=a.x;
+ // Numerical normals from the actual displayed height, not the erosion filter's
+ // approximate slope steering. Correct for orthographic foreshortening.
+ vec3 nr,pr,nu,pu;float junk;
+ locate(gl_FragCoord.xy+vec2(1,0),nr,pr,junk);locate(gl_FragCoord.xy+vec2(0,1),nu,pu,junk);
+ float dx=(ground(q+ivec2(1,0)).x-ground(q-ivec2(1,0)).x)*.5;
+ float dy=(ground(q+ivec2(0,1)).x-ground(q-ivec2(0,1)).x)*.5;
+ vec3 tx=(pr-p)+n*dx,ty=(pu-p)+n*dy;
+ vec3 normal=normalize(cross(tx,ty));if(dot(normal,n)<0.)normal=-normal;
+ if(dot(normal,n)<.001)normal=n;
+ float bx=dx-(ground(q+ivec2(1,0)).z-ground(q-ivec2(1,0)).z)*A_CANOPY_HEIGHT_METRES*.5;
+ float by=dy-(ground(q+ivec2(0,1)).z-ground(q-ivec2(0,1)).z)*A_CANOPY_HEIGHT_METRES*.5;
+ vec3 bareNormal=normalize(cross((pr-p)+n*bx,(pu-p)+n*by));if(dot(bareNormal,n)<0.)bareNormal=-bareNormal;
+ float slope=sqrt(max(0.,1.-pow(dot(bareNormal,n),2.)))/max(.001,dot(bareNormal,n));
+ float temp=env.x,rain=exp(env.y),arid=rain/(450.+max(0.,temp)*45.);
+ float moisture=ramp(.30,1.5,arid),forest=wet.w;
+ float desert=(1.-ramp(.32,.80,arid))*ramp(2.,16.,temp);
+ vec3 grass=mix(A_GRASS,A_FOREST,forest*.88);
+ vec3 colour=mix(grass,A_DESERT,desert);
+ colour=mix(colour,vec3(.35,.35,.28),ramp(4.,-7.,temp)*.40);
+ // Distinguish bedrock and arid plateaus from ice: a high dry plateau isn't white.
+ float rock=ramp(tan(radians(EC_ROCK_SLOPE_DEGREES.x)),tan(radians(EC_ROCK_SLOPE_DEGREES.y)),slope);
+ rock=max(rock,desert*ramp(.8,2.3,h)*.7);rock=max(rock,env.z*ramp(2.5,4.8,h)*(1.-forest*.5)*.55);
+ vec3 lith=mix(A_ROCK*vec3(.89,.95,1.02),A_ROCK*vec3(1.10,1.02,.88),env.w);
+ colour=mix(colour,lith,rock);
+ float snow=ramp(EC_SNOW_TEMPERATURE_C.y,EC_SNOW_TEMPERATURE_C.x,temp)*(1.-ramp(1.,2.,slope));
+ colour=mix(colour,A_SNOW,snow);
+ // Reflectance bands live in ECEF metres, not screen coordinates. No minimum
+ // line width or fake crispness when a feature is smaller than a pixel.
+ float material=0.;for(int i=0;i<S_N;i++){
+  float b=footprintWeight(L_SCALE[S_IDS[i]],fp);if(b>0.)material+=nd3(p,S_IDS[i]).x*S_AMP[i]*b;
+ }
+ colour*=1.+material;
+ if(a.z>.001){colour=mix(colour,A_FOREST*(.85+.4*a.z),clamp01(a.z*4.));}
+ if(wet.x>.001){
+  float depth=wet.y;float shallow=exp(-depth/.16);
+  vec3 ocean=mix(A_OCEAN_DEEP,A_OCEAN_SHALLOW,shallow*.7);
+  if(A_BATHYMETRY){
+   // Cartographic seafloor shading, like a bathymetric map; not transparent water.
+   float dhx=(sphereMap(uMacro,nr).x-sphereMap(uMacro,n).x)/max(length(pr-p),.001);
+   float dhy=(sphereMap(uMacro,nu).x-sphereMap(uMacro,n).x)/max(length(pu-p),.001);
+   float relief=clamp((-dhx+dhy)*4.,-.18,.18);
+   ocean*=1.+relief;
+  }
+  vec3 water=mix(ocean,A_LAKE,clamp01(wet.z));
+  colour=mix(colour,water,clamp01(wet.x));
+ }
+ // Cartographic overhead illumination. No specular term on soil or vegetation.
+ // Camera-relative light keeps all inspected geography readable; modest limb
+ // darkening provides the globe shape without a night-side hiding half the map.
+ vec3 sun=normalize(uCentre*.90-uEast*.55+uNorth*.65);
+ float baseLight=max(.2,dot(n,sun)),localLight=max(.0,dot(normal,sun));
+ float hill=clamp(localLight/max(baseLight,.3),.30,1.6);
+ float shade=mix(1.,hill,A_HILLSHADE_STRENGTH*(1.-wet.x));
+ shade*=.60+.40*sqrt(max(0.,facing));colour*=shade;
+ // Thin atmosphere at the limb only; not a fog filter over detailed maps.
+ float haze=pow(1.-facing,5.)*.35;
+ colour=mix(colour,vec3(.25,.40,.54),haze);
+ outColor=vec4(clamp(colour,0.,1.),1.);
 }
