@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World Terrain 2.0</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#17211e;font:13px system-ui,sans-serif;color:#fff}
+canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
+.panel{position:fixed;background:#14211edc;border:1px solid #ffffff24;border-radius:3px;padding:10px 13px;pointer-events:none}
+#title{left:12px;top:12px}#title strong{display:block;font-size:15px;margin-bottom:4px}#title span{opacity:.8;font-size:11px}
+#buttons{right:12px;top:12px;display:grid;position:fixed}button{background:#14211ee8;color:white;border:1px solid #ffffff38;width:36px;height:36px;cursor:pointer;font-size:22px}
+#scale{left:12px;bottom:12px;background:transparent;border:0;padding:0;text-shadow:0 1px 3px black}#bar{height:5px;border:1px solid white;border-top:0;margin-top:4px}
+#status{right:12px;bottom:12px;font-size:11px}
+#error{display:none;position:fixed;top:30%;left:10%;right:10%;padding:24px;background:#201e1eee;border:1px solid #bda8a8;white-space:pre-wrap;line-height:1.5;max-height:60%;overflow:auto}
+</style></head><body>
+<canvas id="map" aria-label="Generated terrain. Drag to pan, mouse wheel to zoom."></canvas>
+<div id="title" class="panel"><strong>World Terrain 2.0</strong><span>Continents · climate · Runevision erosion</span></div>
+<div id="buttons"><button id="plus" aria-label="Zoom in">+</button><button id="minus" aria-label="Zoom out">−</button></div>
+<div id="scale" class="panel"><span id="scaleText"></span><div id="bar"></div></div>
+<div id="status" class="panel">Loading shaders…</div><div id="error" role="alert"></div>
+<script src="viewer.js"></script></body></html>
