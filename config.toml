@@ -1,15 +1,15 @@
-# GLOBE TERRAIN 3.0
+# TECTONIC GLOBE 4.0
 # Run: python -m pip install -r requirements.txt ; python terrain.py
 # Distances below are METRES. Heights are relative to sea level.
 # Save settings, STOP and RESTART Python. A changed planet setting rebuilds the
 # small global guide maps; no change requires generating the planet at 1 m.
-# This is a static procedural geological model, not a plate-evolution simulation.
+# Tectonics run once and are cached; zooming never reruns a billion years.
 
 [viewer]
-port = 8769
+port = 8770
 open_browser = true
-start_longitude_degrees = -96.0
-start_latitude_degrees = -3.0
+start_longitude_degrees = 72.158203125
+start_latitude_degrees = 14.501953125
 view_width_metres = 23000000.0     # Orthographic span; globe diameter is 12,742 km.
 min_view_width_metres = 160.0      # Around 0.1 m/pixel on a 1600-pixel display.
 max_render_width = 1600           # Set to physical screen width for sharp pixels.
@@ -20,30 +20,85 @@ supersampling = 1                 # 1 or 2. 2 evaluates four times as many pixel
 [planet]
 seed = 1977
 radius_metres = 6371000.0         # Spherical mean Earth radius, not an ellipsoid.
-land_fraction = 0.31              # Area-weighted target before mountain uplift.
+# Present land fraction is an OUTPUT, not re-thresholded after evolution.
+# Fixed water inventory; sea level is solved from available basin volume.
+# It is not retuned to force 31% land after the tectonic run.
+ocean_volume_km3 = 1350000000.0
 map_width = 2048                  # Global guide: width x width/2; NOT final resolution.
 # Shared crust fields make continents; plate polygons NEVER each become islands.
 continent_wavelength_metres = [16000000, 8000000, 4000000, 2000000, 1000000, 450000, 180000]
 continent_amplitude = [0.5, 0.75, 0.70, 0.35, 0.12, 0.04, 0.008]
-lowland_height_metres = 620.0
-abyss_depth_metres = 5100.0
-shelf_width_metres = 160000.0
 
 [tectonics]
-plate_count = 22
-# Plates are spherical Voronoi regions with seeded Euler-rotation velocities.
-# Relative convergence raises NARROW BELTS around connected boundaries; divergent
-# ocean boundaries form submarine ridges. The interiors are not lifted polygons.
-# Vectors below: core range, foothill belt, outer foreland. Explicit independent
-# cross-belt distances and amplitudes, rather than giant uniform alpine blobs.
-belt_width_metres = [85000, 190000, 410000]
-belt_height_metres = [4200, 1900, 300]
-convergence_threshold = 0.12
-boundary_warp_metres = 190000.0
-boundary_warp_wavelength_metres = 1100000.0
-range_along_variation_metres = 480000.0
-ridge_height_metres = 2000.0       # Oceanic spreading ridge, normally stays underwater.
+# FORWARD simulation of a synthetic planet from 1,000 Ma to the present.
+# This does not reconstruct Earth's history or solve mantle convection.
+# Initial plates are spherical Voronoi cells. Later boundaries are ADVECTED:
+# they are never regenerated from moving Voronoi seeds.
+duration_myr = 1000.0
+mesh_subdivisions = 5             # 4: 2,562 cells; 5: 10,242; 6: 40,962.
+# Mesh 5 resolves regional tectonics (~223 km), not individual mountain peaks.
+# The fine terrain shaders still go down to metre scale, conditionally on it.
+max_timestep_myr = 2.0            # Actual step is reduced to satisfy the CFL limit.
+cfl = 0.40                       # 0.1–0.45; smaller is slower, not more detail.
+plate_count = 18
+# One entry broadcasts; otherwise one per INITIAL plate. Units are cm/year.
+# 1 cm/year = 10 km/Myr. Subsequent rifts inherit their parent's properties.
+plate_speed_cm_per_year = [4.0, 3.0, 5.5, 2.0, 6.0, 3.5, 4.5, 2.5, 5.0, 3.0, 6.5, 2.0, 3.5, 5.0, 4.0, 2.5, 5.5, 3.0]
+initial_crust_thickness_km = [35.0, 38.0, 33.0, 36.0, 37.0, 34.0, 39.0, 35.0, 32.0, 36.0, 35.0, 37.0, 34.0, 36.0, 38.0, 35.0, 33.0, 37.0]
+initial_continental_fraction = 0.40 # Includes submerged continental margins.
+initial_ocean_age_myr = [5.0, 160.0]
+# Smooth, prescribed changes in motion; not forces derived from mantle flow.
+motion_epoch_myr = 200.0
+motion_response_myr = 35.0
+velocity_update_myr = 5.0
+# Ages BEFORE PRESENT at which a large plate is split. Empty [] disables rifts.
+# Material is inherited unchanged at the split; extension then thins margins,
+# and newborn ocean crust fills spreading gaps. This is not a random new island.
+rift_ages_myr = [900.0, 750.0, 600.0, 450.0, 300.0, 150.0]
+rift_full_speed_cm_per_year = 3.5
+breakup_crust_thickness_km = 13.0
+# Continents that consume enough surface area in collision can suture. Surface
+# crust volume is transferred/retained, not discarded with the absorbed label.
+suture_check_interval_myr = 25.0
+suture_consumed_area_fraction = 0.30
+suture_memory_myr = 250.0
+# AIRY ISOSTASY: continental elevation changes by (1-rho_crust/rho_mantle)*dH.
+# Different average plate heights are an outcome of crust thickness/composition,
+# not random additive offsets painted on plate polygons.
+mantle_density_kg_m3 = 3300.0
+continental_density_kg_m3 = 2800.0
+oceanic_density_kg_m3 = 2900.0
+water_density_kg_m3 = 1030.0
+reference_crust_thickness_km = 35.0
+reference_continent_elevation_metres = 650.0
+# Oceanic subsidence follows a finite-thickness conductive plate-cooling series.
+thermal_plate_thickness_km = 125.0
+thermal_diffusivity_km2_per_myr = 31.5576 # Equivalent to 1e-6 m²/s.
+ridge_depth_metres = 2600.0
+thermal_subsidence_metres = 3400.0
 trench_depth_metres = 2200.0
+boundary_reference_speed_cm_per_year = 5.0
+# Magmatic addition is a parameterized fraction of consumed ocean-crust volume.
+# Its volume is logged separately; this is not a thermochemical melting model.
+arc_accretion_fraction = 0.16
+arc_relaxation_myr = 280.0
+# Gravitational spreading conserves crust volume within connected plate crust.
+root_spreading_km2_per_myr = 5000.0
+# Eroded excess roots enter an explicit unresolved sediment reservoir. The code
+# reports this sink; it does not pretend to conserve crust while deleting it.
+root_relaxation_myr = 150.0
+# Extra roots relax faster as thickness grows: rate=(H/Href)^power / time.
+# A reduced denudation/collapse law, not a calibrated mantle viscosity solver.
+root_relaxation_thickness_power = 3.0
+# Advected strain memories leave old belts behind after boundaries migrate.
+compression_memory_myr = 420.0
+extension_memory_myr = 180.0
+shear_memory_myr = 220.0
+compression_mask_strain = 0.22
+extension_mask_strain = 0.18
+shear_mask_strain = 0.7
+deformation_width_km = 200.0
+snapshot_interval_myr = 250.0       # Saved data only, no extra viewer controls.
 
 [climate]
 equator_temperature_c = 28.0
@@ -76,6 +131,12 @@ lake_maximum_depth_metres = 500.0
 wavelength_metres = [80000, 23000, 7500, 2500, 800]
 amplitude_metres = [1000, 1050, 680, 170, 30]
 plain_fraction = 0.025
+# Per-relief-layer influence of inherited collision, extension and shear fields.
+# One entry broadcasts; N entries match wavelength_metres. These alter geometry,
+# not only the colour. Stable plate interiors use plain_fraction.
+collision_gain = [1.0]
+rift_gain = [0.28]
+transform_gain = [0.12]
 
 [erosion]
 # Runevision's fading-gully recurrence, adapted to three smoothly blended ECEF
@@ -93,6 +154,11 @@ crease_rounding = [0.0]
 onset = [1.25]
 cell_scale = [0.7]
 normalization = [0.5]
+# Separate per-erosion-layer tectonic responses; independent of relief settings.
+collision_gain = [1.0]
+rift_gain = [0.35]
+transform_gain = [0.12]
+old_belt_rounding_multiplier = 1.7
 assumed_slope = 0.7
 initial_rounding_multiplier = 0.1
 # Subpixel relief is filtered in presentation, not presented as equally bright

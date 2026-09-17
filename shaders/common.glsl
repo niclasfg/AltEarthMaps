@@ -6,7 +6,7 @@ uniform vec2 uSize;
 uniform float uSpan,uPixel;
 uniform ivec3 uCell[L_N];
 uniform vec3 uFraction[L_N];
-uniform sampler2D uMacro,uClimate,uWater;
+uniform sampler2D uMacro,uClimate,uWater,uTectonics,uCrust;
 uniform highp usampler2D uRiverHeader,uRiverIndex;
 uniform sampler2D uRivers;
 uint mixbits(uint h){h^=h>>16u;h*=0x7feb352du;h^=h>>15u;h*=0x846ca68bu;return h^(h>>16u);}

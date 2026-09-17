@@ -1,9 +1,7 @@
-"""One global coarse geological/drainage guide for a finite spherical planet.
-
-The mountain envelope is distance to converging spherical Voronoi BOUNDARIES.
-This is a static kinematic construction, not Cortial et al.'s time evolution.
-Priority-Flood provides an acyclic coarse receiver graph and spill-level lakes.
-Fine ground is evaluated by the GPU, never materialised for the whole planet.
+"""Global guide maps built from EVOLVED tectonic crust.
+The history-dependent fields from tectonics.py set mean elevation and relief;
+climate and the existing coarse hydrology operate on those resulting heights.
+Fine surface detail remains GPU-evaluated rather than stored planet-wide.
 """
 from __future__ import annotations
 import hashlib, heapq, json, math, time
@@ -12,7 +10,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree, SphericalVoronoi
 
-REVISION = 'sphere-3.0-3'
+REVISION = 'sphere-4.0-tectonic-1'
 
 
 def unit(v):
@@ -189,77 +187,45 @@ def river_index(records, R, nx=64,ny=64):
     return header,packed.reshape(rows,size),max(map(len,bins))
 
 
-def boundary_fields(n, centres, omega, R, settings):
-    """Sample CONNECTED Voronoi edges, not nearest-two plate masks. Interpolated
-    edge data avoids discontinuous uplift where the second-nearest seed changes.
-    """
-    sv=SphericalVoronoi(centres);sv.sort_vertices_of_regions(); edges={}
-    for i,region in enumerate(sv.regions):
-        for a,b in zip(region,region[1:]+region[:1]):edges.setdefault(tuple(sorted((a,b))),[]).append(i)
-    samples=[]; convergence=[]
-    for (a,b),plates in edges.items():
-        if len(plates)!=2:continue
-        i,j=plates;A=sv.vertices[a];B=sv.vertices[b]
-        angle=math.acos(float(np.clip(A@B,-1,1)))
-        t=np.linspace(0,1,max(3,math.ceil(angle*R/35000)+1))
-        q=unit(np.sin((1-t[:,None])*angle)*A+np.sin(t[:,None]*angle)*B)
-        normal=unit(centres[j]-centres[i]);tangent=unit(normal-q*(q@normal)[:,None])
-        conv=np.sum((np.cross(omega[i],q)-np.cross(omega[j],q))*tangent,axis=1)
-        samples.extend(q);convergence.extend(conv)
-    samples=np.asarray(samples);convergence=np.asarray(convergence)
-    dist,near=cKDTree(samples).query(n.reshape(-1,3),k=4,workers=1)
-    weights=1/np.maximum(dist,0.002)**2
-    conv=np.sum(weights*convergence[near],axis=1)/weights.sum(axis=1)
-    d=2*np.arcsin(np.clip(dist[:,0]/2,0,1))*R
-    return d.reshape(n.shape[:-1]),conv.reshape(n.shape[:-1])
-
-
 def build(c, directory):
     start=time.perf_counter();p=c['planet'];t=c['tectonics'];cl=c['climate'];R=p['radius_metres'];seed=p['seed']
     w=int(p['map_width']);n,lat=grid(w);points=n.reshape(-1,3)
-    print('Generating spherical continents and boundary-following mountain belts…',flush=True)
-    base=np.zeros(n.shape[:2]);pos=n*R
-    continent_pos=warped(n,R,seed+366,540000,3800000)*R
-    for i,(wav,amp) in enumerate(zip(p['continent_wavelength_metres'],p['continent_amplitude'])):
-        base+=amp*noise3(continent_pos/wav+np.array([i*17.17,5.71*i,-19.31*i]),seed+19*i)
-    weights=np.broadcast_to(np.cos(lat)[:,None],base.shape).ravel()
-    sort=np.argsort(base.ravel());cdf=np.cumsum(weights[sort]);threshold=base.ravel()[sort[np.searchsorted(cdf,cdf[-1]*(1-p['land_fraction']))]]
-    crust=base-threshold
-    # Positive continental crust gives lowlands, not mountains everywhere.
-    land=crust>0;coast=crust*R/2.4
-    h=np.where(land,p['lowland_height_metres']*(1-np.exp(-crust*4)),
-               -p['abyss_depth_metres']*(1-np.exp(coast/p['shelf_width_metres'])))
-    centres,omega=spherical_plates(int(t['plate_count']),seed)
-    q=warped(n,R,seed+789,t['boundary_warp_metres'],t['boundary_warp_wavelength_metres'])
-    d,convergence=boundary_fields(q,centres,omega,R,t)
-    strength=np.clip((convergence-t['convergence_threshold'])/.65,0,1)
-    along=.68+.45*noise3(pos/t['range_along_variation_metres']+11,seed+942)
-    belt=np.zeros_like(h)
-    for width,height in zip(t['belt_width_metres'],t['belt_height_metres']):
-        belt+=height*np.exp(-(d/width)**2)
-    # Only the continental side becomes a large orogen. Ocean-ocean arcs get a
-    # smaller lift and normally remain submerged. No uplift of whole provinces.
-    landfade=np.clip(coast/60000,0,1);landfade=landfade*landfade*(3-2*landfade)
-    uplift=belt*strength*along*landfade
-    orogen=np.clip(uplift/3300,0,1)
-    h+=uplift
-    divergence=np.clip((-convergence-.1)/.7,0,1).reshape(base.shape)
-    h+=t['ridge_height_metres']*divergence*np.exp(-(d/170000)**2)*(~land)
-    h-=t['trench_depth_metres']*strength*np.exp(-(d/70000)**2)*(~land)
-    # Fold-parallel macro relief gives the coarse overview a structural grain.
-    folded=(.55+.45*noise3(pos/190000+31,seed+887))*np.cos(d/17000+noise3(pos/280000,seed+345)*4)
-    h+=orogen*folded*160
+    from tectonics import simulate
+    print('Evolving crust and tectonic history before generating climate and drainage...',flush=True)
+    def initial_field(directions):
+        cp=warped(directions,R,seed+366,540000,3800000)*R
+        value=np.zeros(directions.shape[:-1])
+        for i,(wav,amp) in enumerate(zip(p['continent_wavelength_metres'],p['continent_amplitude'])):
+            value+=amp*noise3(cp/wav+np.array([i*17.17,5.71*i,-19.31*i]),seed+19*i)
+        return value
+    mesh,fields,converging,spreading,tectonic_stats=simulate(c,initial_field,directory)
+    node_fields=np.c_[fields,converging,spreading]
+    sampled=np.empty((len(points),11),np.float32)
+    for begin in range(0,len(points),65536):
+        sampled[begin:begin+65536]=mesh.sample(points[begin:begin+65536],node_fields)
+    sample=sampled.reshape(w//2,w,11)
+    h=sample[...,0].astype(float)*1000
+    orogen=sample[...,1]
+    strength=sample[...,9];divergence=sample[...,10]
+    land=h>0;pos=n*R
+    weights=np.broadcast_to(np.cos(lat)[:,None],h.shape).ravel()
+    # Signed coast distance is a guide attribute, not a randomly placed shore.
+    # Approximation on the global lat/lon guide; tectonic transport itself has
+    # no latitude-grid distortion or special polar seam.
+    coast=(ndimage.distance_transform_edt(land)-ndimage.distance_transform_edt(~land))*(2*np.pi*R/w)
+    tectonic_map=np.stack((sample[...,5],sample[...,6],sample[...,7],sample[...,4]),axis=-1).astype('<f4')
+    crust_map=np.stack((sample[...,2],sample[...,3],sample[...,8],sample[...,1]),axis=-1).astype('<f4')
     temp0=cl['equator_temperature_c']-cl['pole_temperature_drop_c']*np.abs(n[...,1])**1.25
     temp0+=cl['regional_temperature_variation_c']*noise3(pos/3200000,seed+977)
     latdeg=np.abs(np.degrees(lat[:,None])); rain=np.log(cl['mean_rainfall_mm'])+1.0*np.exp(-(latdeg/12)**2)-1.7*np.exp(-((latdeg-29)/11)**2)+.2*np.exp(-((latdeg-53)/15)**2)
-    rain=np.broadcast_to(rain,base.shape).copy()+cl['regional_rainfall_variation']*noise3(pos/1500000+27,seed+744)
+    rain=np.broadcast_to(rain,h.shape).copy()+cl['regional_rainfall_variation']*noise3(pos/1500000+27,seed+744)
     # Prevailing winds reverse between Hadley/Ferrel cells. One upwind sample is
     # a rain-shadow proxy; not fluid dynamics or time-dependent meteorology.
     wind=np.where((latdeg>32)&(latdeg<65),1,-1)
     upwind=(np.roll(h,8,axis=1)*((wind>0).astype(float))+np.roll(h,-8,axis=1)*((wind<0).astype(float)))
     rain-=cl['rain_shadow_strength']*np.clip((upwind-h)/2500,0,2)
     rain=np.clip(rain,np.log(40),np.log(6000))
-    lith=.5+.5*noise3(pos/270000+47,seed+918)
+    lith=np.clip(.20+.40*sample[...,2]+.25*sample[...,5]+.15*np.minimum(sample[...,8],1),0,1)
     # Global hydrology uses a cheaper grid but remains topologically global.
     rw=int(c['hydrology']['routing_width']);step=w//rw
     hsmall=ndimage.zoom(h,1/step,order=1,prefilter=False) if step>1 else h.copy()
@@ -279,14 +245,14 @@ def build(c, directory):
                'uphill_coarse_receivers':int(np.sum(fill.ravel()[rec]>fill.ravel()+1e-7)),
                'land_fraction':float(np.sum(weights*land.ravel())/weights.sum())}
     else:
-        records=np.zeros((0,12),np.float32);hdr=np.zeros((64,128,2),np.uint32);idx=np.zeros((1,1024),np.uint32)
+        records=np.zeros((0,12),np.float32);hdr=np.zeros((384,64,2),np.uint32);idx=np.zeros((1,1024),np.uint32)
         wet=np.zeros((rw//2,rw,4));wet[...,1]=-1e5;stats={'river_reaches':0,'maximum_reaches_in_bin':0}
     macro=np.stack((h/1000,orogen,coast/1000,lith),axis=-1).astype('<f4')
     climate=np.stack((temp0,rain,strength,divergence),axis=-1).astype('<f4')
     directory.mkdir(parents=True,exist_ok=True)
-    for cap in (macro,climate):
+    for cap in (macro,climate,tectonic_map,crust_map):
         cap[0]=cap[0].mean(axis=0);cap[-1]=cap[-1].mean(axis=0)
-    for name,value in [('macro',macro),('climate',climate),('water',wet.astype('<f4')),('river_header',hdr.astype('<u4')),('river_index',idx.astype('<u4'))]:
+    for name,value in [('macro',macro),('climate',climate),('tectonics',tectonic_map),('crust',crust_map),('water',wet.astype('<f4')),('river_header',hdr.astype('<u4')),('river_index',idx.astype('<u4'))]:
         value.tofile(directory/(name+'.bin'))
     rr=np.zeros((max(1,len(records)),3,4),'<f4');rr[:len(records)]=records.reshape(-1,3,4);rr.tofile(directory/'rivers.bin')
     # A useful initial focus is a mid-latitude coastline near an active belt.
@@ -296,7 +262,7 @@ def build(c, directory):
     stats.update({'build_seconds':round(time.perf_counter()-start,3),'height_min_m':float(h.min()),'height_max_m':float(h.max()),'recommended_focus':recommended})
     meta={'macro':[w,w//2],'climate':[w,w//2],'water':[rw,rw//2],'river_header':[64,384],
           'river_index':[1024,idx.shape[0]],'rivers':[3,len(rr)],'max_bin':int(stats['maximum_reaches_in_bin']),
-          'stats':stats,'plates':centres.tolist(),'omega':omega.tolist()}
+          'stats':stats,'tectonics':[w,w//2],'crust':[w,w//2],'tectonic_report':tectonic_stats}
     (directory/'meta.json').write_text(json.dumps(meta,indent=2))
     print(f"Globe guide ready in {stats['build_seconds']} s; {len(records)} river reaches.",flush=True)
     return meta
@@ -304,7 +270,8 @@ def build(c, directory):
 
 def prepare(c,root):
     # Renderer/erosion changes don't require rebuilding the coarse globe.
-    key=hashlib.sha256(json.dumps({k:c[k] for k in ('planet','tectonics','climate','hydrology')},sort_keys=True).encode()+REVISION.encode()).hexdigest()[:16]
+    source=(root/'tectonics.py').read_bytes()+Path(__file__).read_bytes()
+    key=hashlib.sha256(json.dumps({k:c[k] for k in ('planet','tectonics','climate','hydrology')},sort_keys=True).encode()+REVISION.encode()+source).hexdigest()[:16]
     path=root/'cache'/key
     if (path/'meta.json').exists():return path,json.loads((path/'meta.json').read_text())
     return path,build(c,path)

@@ -22,7 +22,7 @@ try{
  precision highp float;uniform sampler2D uColor;uniform vec2 uOutputSize;out vec4 outColor;void main(){outColor=texture(uColor,gl_FragCoord.xy/uOutputSize);}`);
  gl.bindVertexArray(gl.createVertexArray());
  const data={};
- for(const name of ['macro','climate','water','rivers','river_header','river_index']){
+ for(const name of ['macro','climate','water','rivers','river_header','river_index','tectonics','crust']){
   const bytes=await(await fetch('/data/'+name+'.bin')).arrayBuffer(),dims=b.meta[name],uint=name.startsWith('river_'),channels=name==='river_header'?2:name==='river_index'?1:4;
   const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   // River reaches are packed in 1024-wide rows, not a texture taller than GPU limits.
@@ -33,7 +33,7 @@ try{
   data[name]=tex;
  }
  function bind(p,name,tex,unit){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(p.u[name],unit);}
- function maps(p){for(const [i,kv] of Object.entries([['uMacro','macro'],['uClimate','climate'],['uWater','water'],['uRivers','rivers'],['uRiverHeader','river_header'],['uRiverIndex','river_index']]))bind(p,kv[0],data[kv[1]],+i);}
+ function maps(p){for(const [i,kv] of Object.entries([['uMacro','macro'],['uClimate','climate'],['uWater','water'],['uRivers','rivers'],['uRiverHeader','river_header'],['uRiverIndex','river_index']]))bind(p,kv[0],data[kv[1]],+i);bind(p,'uTectonics',data.tectonics,9);bind(p,'uCrust',data.crust,10);}
  function uniforms(p,w,h,pixel,visibleSpan){gl.uniform3fv(p.u.uCentre,centre);gl.uniform3fv(p.u.uEast,east);gl.uniform3fv(p.u.uNorth,north);gl.uniform2f(p.u.uSize,w,h);gl.uniform1f(p.u.uPixel,pixel);gl.uniform1f(p.u.uSpan,visibleSpan);
   const cell=new Int32Array(b.bank.length*3),fract=new Float32Array(cell.length);
   b.bank.forEach((a,i)=>{for(let j=0;j<3;j++){let q=centre[j]*R/a.scale+a.offset[j],k=Math.floor(q);cell[3*i+j]=k|0;fract[3*i+j]=q-k;}});
@@ -73,6 +73,6 @@ try{
  // Small inspection hooks, no shipped test framework or extra interface panels.
  window.globe={ready:false,getView:()=>({...last}),setView:(lon,lat,widthKm)=>{orient(lon,lat);span=widthKm;request(false);},
   read:()=>{gl.finish();gl.bindFramebuffer(gl.FRAMEBUFFER,field.fbo);gl.readBuffer(gl.COLOR_ATTACHMENT0);let a=new Float32Array(field.w*field.h*4);gl.readPixels(0,0,field.w,field.h,gl.RGBA,gl.FLOAT,a);gl.bindFramebuffer(gl.FRAMEBUFFER,null);return{w:field.w,h:field.h,values:a};},gl,bundle:b};
- document.querySelector('#brand small').textContent=`${(R).toLocaleString()} km radius · drag to rotate · scroll to zoom`;request(false);
+ document.querySelector('#brand small').textContent=`${b.meta.tectonic_report.duration_myr.toLocaleString()} Myr · ${b.meta.tectonic_report.final_plates} plates · ${(R).toLocaleString()} km radius`;request(false);
 }catch(e){fail(e);}
 })();

@@ -1,38 +1,23 @@
 #!/usr/bin/env python3
 """Run with Python 3.11+: python terrain.py. Local files only; no online maps."""
 from __future__ import annotations
-import sys
+import sys,os
+os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
+os.environ.setdefault("OMP_NUM_THREADS","1")
 if sys.version_info<(3,11):raise SystemExit('Python 3.11 or newer is required.')
 import json,math,mimetypes,tomllib,webbrowser
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 ROOT=Path(__file__).resolve().parent
-VERSION='Globe Terrain 3.0'
-
-
-def load_config():
-    c=tomllib.loads((ROOT/'config.toml').read_text())
-    def arrays(section,root,fields):
-        n=len(c[section][root])
-        if not 1<=n<=24:raise ValueError(f'{section}.{root}: use 1–24 layers.')
-        for k in [root]+fields:
-            a=c[section][k]
-            if not isinstance(a,list) or len(a) not in (1,n):raise ValueError(f'{section}.{k}: need 1 or {n} values.')
-            if not all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in a):raise ValueError(f'{section}.{k}: finite numbers required.')
-            if len(a)==1:c[section][k]=a*n
-        if any(v<=0 for v in c[section][root]):raise ValueError(f'{section}.{root}: scales must be positive.')
-        if any(a<=b for a,b in zip(c[section][root],c[section][root][1:])):raise ValueError(f'{section}.{root}: order from large to small.')
-    arrays('planet','continent_wavelength_metres',['continent_amplitude'])
-    arrays('tectonics','belt_width_metres',['belt_height_metres']) # widths are increasing: handled separately below
-    return c
+VERSION='Tectonic Globe 4.0'
 
 
 def checked_config():
     # Layer validation; tectonic widths naturally run core -> foreland instead.
     c=tomllib.loads((ROOT/'config.toml').read_text())
     specs=[('planet','continent_wavelength_metres',['continent_amplitude']),
-           ('relief','wavelength_metres',['amplitude_metres']),
-           ('erosion','wavelength_metres',['amplitude_metres','gully_weight','detail','ridge_rounding','crease_rounding','onset','cell_scale','normalization']),
+           ('relief','wavelength_metres',['amplitude_metres','collision_gain','rift_gain','transform_gain']),
+           ('erosion','wavelength_metres',['amplitude_metres','gully_weight','detail','ridge_rounding','crease_rounding','onset','cell_scale','normalization','collision_gain','rift_gain','transform_gain']),
            ('dunes','wavelength_metres',['amplitude_metres']),
            ('appearance','surface_wavelength_metres',['surface_colour_strength'])]
     for s,root,fields in specs:
@@ -45,9 +30,9 @@ def checked_config():
             c[s][k]=[float(x) for x in (a*n if len(a)==1 else a)]
         if any(x<=0 for x in c[s][root]):raise ValueError(f'{s}: wavelengths must be positive.')
         if any(a<=b for a,b in zip(c[s][root],c[s][root][1:])):raise ValueError(f'{s}: wavelengths must decrease.')
-    if len(c['tectonics']['belt_width_metres'])!=len(c['tectonics']['belt_height_metres']):raise ValueError('tectonics: widths/heights must have matching lengths.')
     if not 4<=c['tectonics']['plate_count']<=100:raise ValueError('plate_count must be 4–100.')
-    if not .05<c['planet']['land_fraction']<.9:raise ValueError('land_fraction must be between 0.05 and 0.9.')
+    from tectonics import validate_config
+    validate_config(c)
     if not 1e5<=c['planet']['radius_metres']<=1e8:raise ValueError('radius_metres must be between 100 km and 100,000 km.')
     for s,k in [('planet','map_width'),('hydrology','routing_width')]:
         v=c[s][k]

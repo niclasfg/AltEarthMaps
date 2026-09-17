@@ -13,7 +13,7 @@ vec3 macroGradient(vec3 n){
 // Full recurrence state never depends on pixel footprint. A separate accumulated
 // height is filtered for display. This isn't exact integration of nonlinear
 // erosion, but avoids changing the parent terrain and its gully directions.
-vec3 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint){
+vec3 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint,vec3 history,float ruggedness){
  vec3 weights=chartWeights(n);float exact=0.,display=0.,ridge=0.;
  for(int chart=0;chart<3;chart++){
   float weight=weights[chart];if(weight<.0001)continue;
@@ -29,11 +29,13 @@ vec3 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footp
    if(!uExact && vis==0.)break;
    vec4 ph=phacelle(p,E_IDS[k],chart,safe_normalize(gs),E_CELL_SCALE[k],E_NORMALIZATION[k]);
    ph.zw*=-1./L_SCALE[E_IDS[k]];
-   float amp=E_AMPLITUDE_METRES[k]*terrainAmp;
+   float response=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*clamp01(ruggedness*E_COLLISION_GAIN[k]+history.y*E_RIFT_GAIN[k]+history.z*E_TRANSFORM_GAIN[k]);
+   float amp=E_AMPLITUDE_METRES[k]*terrainAmp*response;
    gs+=sign(ph.y)*ph.zw*amp*E_GULLY_WEIGHT[k];
    float faded=mix(f,ph.x*E_GULLY_WEIGHT[k],mask);
    float delta=(faded-.20)*amp;he+=delta;hd+=delta*vis;f=faded;
    float r=mix(E_CREASE_ROUNDING[k],E_RIDGE_ROUNDING[k],clamp01(ph.x+.5));
+   r*=mix(E_OLD_BELT_ROUNDING_MULTIPLIER,1.,history.x);
    float next=ease_out(smooth_start(abs(ph.y)*E_ONSET[k],r*E_ONSET[k]));
    mask=(1.-pow(1.-clamp01(mask),E_DETAIL[k]))*next;
    rf=mix(rf,ph.x,rm);rm*=ease_out(abs(ph.y)*1.5);
@@ -88,20 +90,26 @@ void main(){
  if(!locate(gl_FragCoord.xy,n,p,facing)){outGround=vec4(0);outEnvironment=vec4(0);outWater=vec4(0);return;}
  float fp=uExact?0.:uPixel/max(.09,facing);
  vec4 m=sphereMap(uMacro,n),cl=sphereMap(uClimate,n),wet=sphereMap(uWater,n);
+ vec4 tect=sphereMap(uTectonics,n),crust=sphereMap(uCrust,n);
  float land=ramp(-.03,.15,m.x),rug=m.y,h=m.x,shown=h;
  vec3 g=macroGradient(n),rg=vec3(0);float rough=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*rug;
  float localRelief=0.;
  for(int i=0;i<R_N;i++){
-  vec4 ns=nd3(p,R_IDS[i]);float a=R_AMPLITUDE_METRES[i]*rough*land;
+  vec4 ns=nd3(p,R_IDS[i]);
+  float layerRough=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*clamp01(rug*R_COLLISION_GAIN[i]+tect.y*R_RIFT_GAIN[i]+tect.z*R_TRANSFORM_GAIN[i]);
+  float a=R_AMPLITUDE_METRES[i]*layerRough*land;
   h+=ns.x*a;shown+=ns.x*a*footprintWeight(R_WAVELENGTH_METRES[i],fp);rg+=ns.yzw*a;localRelief+=ns.x*a;
  }
  g+=rg;g-=n*dot(n,g);
  float temp=cl.x-LAPSE*max(0.,h),aridity=exp(cl.y)/(450.+max(0.,temp)*45.);
- float erosionAmp=rough*land*(.22+.78*ramp(.003,.05,length(g)));
+ float erosionAmp=land*(.22+.78*ramp(.003,.05,length(g)));
  // Downward displacement is bounded on land, independent of render footprint.
- float maxDrop=0.;for(int i=0;i<E_N;i++)maxDrop+=E_AMPLITUDE_METRES[i]*1.2;
+ float maxDrop=0.;for(int i=0;i<E_N;i++){
+  float response=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*clamp01(rug*E_COLLISION_GAIN[i]+tect.y*E_RIFT_GAIN[i]+tect.z*E_TRANSFORM_GAIN[i]);
+  maxDrop+=E_AMPLITUDE_METRES[i]*1.2*response;
+ }
  erosionAmp=min(erosionAmp,max(0.,h-.0003)/max(maxDrop,1e-5));
- vec3 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp);
+ vec3 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp,tect.xyz,rug);
  h+=er.x;shown+=er.y;
  float slope=length(g);
  float desert=(1.-ramp(.30,.70,aridity))*ramp(6.,18.,temp);
@@ -144,6 +152,6 @@ void main(){
  if(freshwater<.01 && shown>0.)waterCover=riverCover;
  canopy*=1.-waterCover;
  outGround=vec4(shown+canopy,h,canopy/A_CANOPY_HEIGHT_METRES,1.);
- outEnvironment=vec4(temp,cl.y,rug,m.w);
+ outEnvironment=vec4(temp,cl.y,rug,clamp01(.65*crust.x+.35*clamp01(crust.z)));
  outWater=vec4(waterCover,max(0.,surface-h),freshwater,trees);
 }
