@@ -1,8 +1,17 @@
 uniform sampler2D uGround,uEnvironment,uWet;
 uniform vec2 uTargetSize;
 uniform float uBorder;
+uniform int uOverlay;
 out vec4 outColor;
 vec4 ground(ivec2 p){return texelFetch(uGround,clamp(p,ivec2(0),textureSize(uGround,0)-1),0);}
+uint plateAt(vec3 n){
+ ivec2 sz=textureSize(uPlates,0);vec2 q=sphereUV(n)*vec2(sz)-.5;
+ return texelFetch(uPlates,texWrap(ivec2(floor(q)),sz),0).r;
+}
+vec3 plateColour(uint id){
+ float f=fract(float(id)*0.377);
+ return .45+.45*cos(6.28318*(f+vec3(0.,.33,.67)));
+}
 void main(){
  vec3 n,p;float facing;
  if(!locate(gl_FragCoord.xy,n,p,facing)){
@@ -27,10 +36,12 @@ void main(){
  vec3 bareNormal=normalize(cross((pr-p)+n*bx,(pu-p)+n*by));if(dot(bareNormal,n)<0.)bareNormal=-bareNormal;
  float slope=sqrt(max(0.,1.-pow(dot(bareNormal,n),2.)))/max(.001,dot(bareNormal,n));
  float temp=env.x,rain=exp(env.y),arid=rain/(450.+max(0.,temp)*45.);
+ vec3 colour;
+ if(uOverlay==0){
  float moisture=ramp(.30,1.5,arid),forest=wet.w;
  float desert=(1.-ramp(.32,.80,arid))*ramp(2.,16.,temp);
  vec3 grass=mix(A_GRASS,A_FOREST,forest*.88);
- vec3 colour=mix(grass,A_DESERT,desert);
+ colour=mix(grass,A_DESERT,desert);
  colour=mix(colour,vec3(.35,.35,.28),ramp(4.,-7.,temp)*.40);
  // Distinguish bedrock and arid plateaus from ice: a high dry plateau isn't white.
  float rock=ramp(tan(radians(EC_ROCK_SLOPE_DEGREES.x)),tan(radians(EC_ROCK_SLOPE_DEGREES.y)),slope);
@@ -70,5 +81,20 @@ void main(){
  // Thin atmosphere at the limb only; not a fog filter over detailed maps.
  float haze=pow(1.-facing,5.)*.35;
  colour=mix(colour,vec3(.25,.40,.54),haze);
+ }else{
+  // Data overlays: flat cartographic colour, no hillshade. All inputs are
+  // already-bound guide textures or field buffers; no extra passes.
+  vec4 tect=sphereMap(uTectonics,n),crust=sphereMap(uCrust,n),flow=sphereMap(uFlow,n);
+  if(uOverlay==1){float t=clamp01((h+5.)/11.);colour=vec3(t);}
+  else if(uOverlay==2){colour=h>0.?vec3(.92):vec3(.02,.03,.05);colour=mix(colour,vec3(.1,.5,.55),clamp01(wet.z));}
+  else if(uOverlay==3){float t=clamp01((temp+45.)/90.);vec3 c1=vec3(.25,.2,.6),c2=vec3(.9,.93,.95),c3=vec3(.9,.8,.2),c4=vec3(.8,.15,.1);colour=t<.33?mix(c1,c2,t/.33):(t<.66?mix(c2,c3,(t-.33)/.33):mix(c3,c4,(t-.66)/.34));}
+  else if(uOverlay==4){float t=clamp01((env.y-3.7)/4.2);vec3 c1=vec3(.45,.3,.15),c2=vec3(.2,.5,.25),c3=vec3(.2,.4,.8);colour=t<.5?mix(c1,c2,t*2.):mix(c2,c3,t*2.-1.);}
+  else if(uOverlay==5){colour=vec3(clamp01(env.z));}
+  else if(uOverlay==6){colour=clamp01(vec3(tect.x,tect.y,tect.z)*1.2);}
+  else if(uOverlay==7){float t=clamp01(tect.w/250.);colour=h>0.?vec3(.08):mix(vec3(.1,.7,.8),vec3(.02,.05,.35),t);}
+  else if(uOverlay==8){float t=clamp01(crust.y/70.);colour=h>0.?vec3(t):vec3(.02,.03,.06);}
+  else if(uOverlay==9){float wtr=max(wet.x,wet.z);vec3 base=h>0.?vec3(.12):vec3(.01,.02,.03);colour=mix(base,vec3(.2,.75,.9),clamp01(wtr));colour=mix(colour,vec3(.1,.3,.9),clamp01(flow.a)*.5*(1.-clamp01(wtr)));}
+  else{uint id=plateAt(n);colour=plateColour(id)*(h>0.?1.:.4);}
+ }
  outColor=vec4(clamp(colour,0.,1.),1.);
 }

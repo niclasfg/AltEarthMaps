@@ -1,5 +1,7 @@
 # TECTONIC GLOBE 4.0
 # Run: python -m pip install -r requirements.txt ; python terrain.py
+# Every setting below is also live-editable from the viewer's settings panel
+# (overrides persist to overrides.json; Reset restores this file).
 # Distances below are METRES. Heights are relative to sea level.
 # Save settings, STOP and RESTART Python. A changed planet setting rebuilds the
 # small global guide maps; no change requires generating the planet at 1 m.
@@ -18,16 +20,26 @@ settle_ms = 170
 supersampling = 1                 # 1 or 2. 2 evaluates four times as many pixels.
 
 [planet]
-seed = 1971
+seed = 1973
 radius_metres = 6371000.0         # Spherical mean Earth radius, not an ellipsoid.
-# Present land fraction is an OUTPUT, not re-thresholded after evolution.
-# Fixed water inventory; sea level is solved from available basin volume.
-# It is not retuned to force 31% land after the tectonic run.
-ocean_volume_km3 = 1350000000.0
+# Emerged land is SOLVED: sea datum is trimmed post-erosion so exactly this
+# fraction of the sphere sits above sea level (seed-robust). The implied water
+# inventory is reported per world instead of forced. Fixed-volume solves left
+# land at the mercy of each seed's collision history (25–35% observed).
+emerged_land_target = 0.35
+ocean_volume_km3 = 1050000000.0   # Deep-ocean inventory for the tectonic run's
+                                  # snapshots. Sized so its natural emerged
+                                  # fraction sits near the target below; the
+                                  # final trim then stays a small correction
+                                  # and implied volume lands nearby.
 map_width = 2048                  # Global guide: width x width/2; NOT final resolution.
-# Shared crust fields make continents; plate polygons NEVER each become islands.
-continent_wavelength_metres = [16000000, 8000000, 4000000, 2000000, 1000000, 450000, 180000]
-continent_amplitude = [0.7, 0.6, 0.8, 0.55, 0.19, 0.04, 0.008]
+# Shared grown crust regions make continents; plate polygons NEVER each become islands.
+# Landmasses are farthest-point seeds grown by flood fill with area budgeting
+# (no noise field defines land). Budget is continental area incl. margins;
+# emerged land after evolution + sea level is an output near ~35%.
+continent_count = 5
+continent_size_variety = 0.45      # 0 equal siblings, 1 spanning small isles to supercontinents.
+continent_budget_fraction = 0.78   # 0.05–0.90 of sphere area claimed by continental crust.
 
 [tectonics]
 # FORWARD simulation of a synthetic planet from 1,000 Ma to the present.
@@ -45,7 +57,6 @@ plate_count = 12
 # 1 cm/year = 10 km/Myr. Subsequent rifts inherit their parent's properties.
 plate_speed_cm_per_year = [4.0, 3.0, 5.5, 2.0, 6.0, 3.5, 4.5, 2.5, 5.0, 3.0, 6.5, 2.0]
 initial_crust_thickness_km = [35.0, 38.0, 33.0, 36.0, 37.0, 34.0, 39.0, 35.0, 32.0, 36.0, 35.0, 37.0]
-initial_continental_fraction = 0.40 # Includes submerged continental margins.
 initial_ocean_age_myr = [5.0, 160.0]
 # Smooth, prescribed changes in motion; not forces derived from mantle flow.
 motion_epoch_myr = 200.0
@@ -70,7 +81,7 @@ continental_density_kg_m3 = 2800.0
 oceanic_density_kg_m3 = 2900.0
 water_density_kg_m3 = 1030.0
 reference_crust_thickness_km = 35.0
-reference_continent_elevation_metres = 650.0
+reference_continent_elevation_metres = 1050.0
 # Oceanic subsidence follows a finite-thickness conductive plate-cooling series.
 thermal_plate_thickness_km = 125.0
 thermal_diffusivity_km2_per_myr = 31.5576 # Equivalent to 1e-6 m²/s.
@@ -112,12 +123,19 @@ regional_rainfall_variation = 0.8
 rain_shadow_strength = 0.8
 
 [hydrology]
-# Entire spherical guide grid is routed to ocean with Priority-Flood. Longitude
-# wraps; both polar caps have explicit adjacency. Area uses latitude weighting.
-# This builds major river topology ONCE, rather than drawing random blue gullies.
+# Entire spherical guide grid is routed to ocean with iterative Priority-Flood.
+# Longitude wraps; both polar caps have explicit adjacency. Area uses latitude
+# weighting. Coarse passes only FOLLOW gradients (no height carving); finer
+# erosion octaves are increasingly steered by the baked downstream field.
 enabled = true
 routing_width = 1024              # Must divide planet.map_width. ~39 km at equator.
-river_source_area_km2 = 35000.0     # Coarse major rivers, NOT local metre tributaries.
+river_source_area_km2 = 80000.0     # Coarse major rivers, NOT local metre tributaries.
+route_iterations = 3              # 1 = single pass (legacy); 2-5 refines flats/receivers.
+refine_routing = true             # Second routing pass at planet.map_width for tributaries.
+refine_source_area_km2 = 30000.0  # Tributary threshold for the refine pass (narrower banks).
+max_river_records = 80000         # Largest-first cap; small streams ride shader gullies.
+erosion_flow_gain = 0.45          # 0 disables steering; ~0.3-0.6 steers fine octaves.
+coarse_follow_octaves = 3         # First N erosion octaves follow only (zero influence).
 width_coefficient_metres = 0.8    # Half-width = coefficient * sqrt(area in km²).
 maximum_half_width_metres = 1600.0
 valley_width_metres = 14000.0
@@ -135,6 +153,19 @@ trunk_display_wavelength_metres = 24000.0
 lake_minimum_depth_metres = 25.0
 lake_maximum_depth_metres = 500.0
 # Lakes are spill-level depressions in the global guide, not seeded circular bowls.
+
+[fluvial]
+# Map-stage stream-power geomorphology: graded valleys from tectonic uplift,
+# deposition in lowlands, estuaries where trunks meet the sea. No noise.
+enabled = true
+strength = 0.35                 # 0 follow original heights, 1 full graded profiles.
+grade = 0.035                   # Reference downstream slope at reference discharge.
+discharge_reference_km2 = 5000.0
+discharge_exponent = 0.5        # Slope scales as (Qref/Q)^exponent (theory: ~0.5).
+deposition_metres = 150.0       # Cap on lowland aggradation toward the profile.
+estuary_area_km2 = 25000.0      # Only large trunks overdeepen near the coast.
+estuary_depth_metres = 150.0
+diffusion_passes = 2            # Hillslope rounding passes (0–10).
 
 [relief]
 # Small landform relief sits INSIDE the global long mountain belts. Values are

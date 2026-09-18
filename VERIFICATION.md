@@ -96,3 +96,21 @@ the billion-year dynamics, mantle-force validation or photographic comparison.
 The prescribed kinematics and collision/relaxation rules remain reduced-order.
 No claim is made that all climate boundaries, coastlines or local rivers are
 physically correct. The code does not reproduce the complete Cortial application.
+
+## Grown-continent worlds (sphere-5.x, seeds 1971 / 7 / 12345)
+
+Same machine family as above. Continents from seeded region growth (no noise
+field), stream-power valleys + estuaries at map stage, sea datum trimmed to
+35% emerged land. Measured per world:
+
+- Emerged land: exactly 35.00% on all three seeds (area-weighted).
+- Pre-trim land 28–30%; datum shifts −1.1 to −1.5 km; implied ocean volume
+  ~0.9–1.0 Gkm³ against the 1.05 Gkm³ tectonic-run inventory.
+- Relief: guide maxima 4.0 / 6.6 / 5.7 km; minima −3.7 / −3.5 / −3.2 km.
+- Drainage: 0 uphill coarse receivers on all seeds; 2,000/2,000 sampled land
+  cells drain to ocean with 0 cycles; 71–80k river reaches with per-bin maxima
+  153–387 (mean ~2–4 per bin); 338–2,489 lake cells.
+- Determinism: the tectonic simulation re-run bit-identically (max diff
+  2.4e-7 km); full builds are reproducible per (config, seed, code).
+- Build time ~42–57 s per world; default cache serves bundle.json plus all
+  data textures (HTTP 200), including `flow.bin` and 96-wide river index.

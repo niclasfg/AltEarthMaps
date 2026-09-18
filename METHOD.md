@@ -9,9 +9,15 @@ finite-volume transport and collision rules below are this implementation.
 ## 1. Initial crust and plates
 
 Time runs FORWARD from a synthetic 1,000 Ma initial condition to a synthetic
-present. Continuous, seeded 3-D scalar fields on the sphere specify the initial
-continental crust. Independently, spherical Voronoi cells initialize plate IDs.
-Each plate can contain both continental and oceanic crust; it is not one island.
+present. Continental crust is assigned by seeded region growth on the mesh,
+never by a noise field: farthest-point continent seeds (top-3 jitter) grow by
+round-robin flood fill with log-normal per-continent area targets, elongation
+bias and trapped-sea absorption, until the configured crust budget is claimed;
+margins blend over a few mesh cells. Independently, spherical Voronoi cells
+initialize plate IDs. Each plate can contain both continental and oceanic
+crust; it is not one island. The growth recipe follows standard tectonic-planet
+practice (Red Blob Games' planet notes; World Orogen's ocean-land assignment
+is a close published reference, implemented here independently).
 
 After initialization the Voronoi diagram is NOT recomputed from moving seeds.
 Doing that would relabel material instead of transporting its history. Plates
@@ -157,25 +163,41 @@ than fitted to observations. Continental crust thickness and thermal plate
 thickness are different quantities. Current trenches are added on the oceanic
 side as a parameterized freeboard correction, not by evolving slab geometry.
 
-The planet has a fixed water volume. Sea datum L is found by solving
+The tectonic run uses a fixed water inventory for its snapshots. The final
+map-stage sea datum is then trimmed to the configured emerged-land target:
 
-    V_water = sum_i area_i max(L - b_i, 0) / (1 - rho_water/rho_mantle),
+    weight(h > L*) = target,
 
-where b is unloaded freeboard. The resulting submerged elevations include water
-loading. Sea level is not adjusted to enforce Earth's emerged-land percentage.
-The budget refers to the coarse simulated surface; procedural fine relief and
-coarse interpolation can slightly change the rendered basin volume.
+solved by area-weighted quantile over the eroded heights, and the implied
+water inventory is reported per world instead of forced. Fixed-volume solves
+leave emerged land at the mercy of each seed's collision history (28–30%
+observed with these settings); targeting the fraction is what makes ~35%
+hold for any seed. The trim is exact at the coastline; deep-basin load error
+is irrelevant to the contour.
 
-## 6. The outputs really feed the terrain
+## 6. Fluvial geomorphology and the maps that feed the terrain
+
+After sampling, uplift (orogenic ruggedness plus convergence, from the
+tectonic fields) and rainfall-driven discharge feed a steady-state
+stream-power solve (Cordonnier et al. 2016 [7]; analytical treatment after
+Tzathas et al. 2024 [8]). Graded profiles S = (U/K)·Q^-m integrate upstream
+from coastal outlets in one topological pass; valleys carve toward them,
+lowlands aggrade, large trunks overdeepen into estuaries, and light
+hillslope diffusion rounds interfluves. Coasts are therefore intersections
+of an eroded landscape with sea level — drowned dendritic valleys and
+deltas — not contours of a smooth field. Iterative river routing runs on
+the eroded heights, so drainage is consistent by construction.
 
 The returned simulation fields produce these equirectangular float32 maps:
 
 | File | R | G | B | A |
 |---|---|---|---|---|
-| `macro.bin` | isostatic height, km | orogenic ruggedness | coast distance, km | surface-material proxy |
+| `macro.bin` | eroded height, km | orogenic ruggedness | coast distance, km | surface-material proxy |
 | `tectonics.bin` | transported compression memory | transported extension memory | transported shear memory | ocean age, Myr |
 | `crust.bin` | continental fraction | conditional continental thickness, km | igneous height contribution, km | ruggedness |
 | `climate.bin` | sea-level temperature | log rainfall | current convergence strength | current divergence strength |
+| `flow.bin` | dist-to-ocean, Mm | downstream slope | Strahler order / 8 | log accumulation / 12 |
+| `plates.bin` | present-day plate id (uint) | — | — | — |
 
 Coast distance is a raster approximation, not a geodesic distance solver. Crust
 thickness and ocean age are zero where their carrier is effectively absent.
@@ -196,7 +218,17 @@ independently determine elevation; it modulates refinement of the already
 isostatic terrain. Mantle-derived basalt and continental fraction contribute to
 surface material selection. Climate and coarse drainage are rebuilt from the new
 terrain guides. Runevision's fading-gully filter [6] supplies the existing local
-mountain detail; it does not solve tectonics or guarantee connected local streams.
+mountain detail; it does not solve tectonics.
+
+Iterative downstream routing works in two stages. Coarse passes only FOLLOW
+gradients: Priority-Flood gives spill heights, then flat receivers are
+iteratively re-resolved toward the neighbour with the shortest downstream path
+to the ocean (heights are never carved), with a second pass at full guide
+resolution adding tributary-scale reaches with narrower valley banks. The baked
+`flow` guide (dist-to-ocean, downstream slope, Strahler order, log area) then
+steers fine erosion octaves: the first `coarse_follow_octaves` refine
+follow-only, and finer octaves increasingly deepen gullies inside valleys that
+already drain, so refined tributaries join the trunk instead of stranding.
 
 ## 7. Resolution and limits
 
@@ -236,6 +268,22 @@ bathymetry and heat flow with age*, Journal of Geophysical Research 82(5),
 
 [6] Rune Skovbo Johansen (2026), *Fast and Gorgeous Erosion Filter*.
 https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html
+
+[7] Cordonnier, Braun, Cani, Beneš, Galin, Peytavie & Guérin (2016), *Large
+Scale Terrain Generation from Tectonic Uplift and Fluvial Erosion*, Computer
+Graphics Forum 35(2), 165–175. Stream-power erosion from uplift; our map
+stage implements the steady-state graded-profile limit in one ordered pass.
+https://doi.org/10.1111/cgf.12820
+
+[8] Tzathas, Gailleton, Steer & Cordonnier (2024), *Physically-based
+analytical erosion for fast terrain generation*, Computer Graphics Forum.
+Analytical stream-power solutions; motivates the iteration-free treatment.
+https://doi.org/10.1111/cgf.15033
+
+Continent seeding/growth follows standard tectonic-planet practice: Amit
+Patel's planet-generation notes (Red Blob Games, 2018) and the World Orogen
+generator's ocean-land assignment (GPL-3.0, used as a method reference only;
+no code reused). https://www.redblobgames.com/x/1843-planet-generation/
 
 The retained global drainage guide uses Priority-Flood depression filling;
 see Barnes, Lehman & Mulla, *Priority-Flood: An optimal depression-filling and

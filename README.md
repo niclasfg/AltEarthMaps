@@ -64,8 +64,11 @@ specific implementation properties, not geological predictive accuracy.
 
 The default tectonic mesh is about 223 km across a cell. The shader's metre-scale
 relief is conditional procedural refinement, not metre-resolution tectonics.
-Major drainage is routed on a separate coarser global grid. Local erosion gullies
-are not all guaranteed to connect to that coarse river skeleton. Climate, snow,
+Major drainage is routed on a separate coarser global grid. Stream-power carving
+at map stage builds graded valleys, deltas and estuaries, so coasts are eroded
+shorelines rather than smooth contours; metre-scale gully connections are
+still not all guaranteed. Emerged land is solved to ~35% on every seed.
+Climate, snow,
 vegetation and colour remain approximate and are not photographic satellite data.
 
 Read `METHOD.md` for the equations, approximations, output channels and sources;
@@ -74,9 +77,21 @@ read `VERIFICATION.md` for the checks actually run on this release.
 ## Files
 
 - `tectonics.py`: moving crust, collisions, spreading, cooling and isostasy.
-- `planet.py`: initial crust field, coarse map sampling, climate and drainage.
-- `terrain.py`: configuration validation and local HTTP server.
-- `viewer.js`, `index.html`, `shaders/`: the existing globe viewer and refinement.
+- `continents.py`: grown landmass regions (seeds + flood fill + area budget).
+- `fluvial.py`: steady-state stream-power valleys, deposition, estuaries.
+- `planet.py`: continents, coarse map sampling, climate and drainage.
+- `terrain.py`: configuration validation, settings API and local HTTP server.
+- `viewer.js`, `index.html`, `shaders/`: the globe viewer, settings panel and refinement.
+
+## Control panel
+
+The running viewer has a settings sidebar (all of `config.toml`: World,
+Terrain, Water, Look, View tabs) plus overlay buttons across the top
+(Satellite, Height, Land mask, Temperature, Rainfall, Ruggedness, Strain,
+Ocean age, Crust, Rivers, Plates — keys 0–9). Dots mark cost: green applies
+live, amber recompiles shaders, red regenerates the world (~1 min, with
+progress and cancel). Edits persist to `overrides.json`; Reset deletes it.
+The API (`/api/schema`, `/api/settings`, `/api/jobs/<id>`) serves the same.
 - `cache/<key>/tectonics_state.npz`: present-day numerical fields on sphere nodes.
 - `cache/<key>/tectonics_history.npz`: saved coarse snapshots, not resumable checkpoints.
 - `cache/<key>/tectonics_report.json`: plate averages, events and numerical budgets.

@@ -18,3 +18,10 @@ NumPy, SciPy and Numba are external dependencies installed through pip. They are
 not bundled into this ZIP; their respective licenses apply to those packages.
 The retained Python/JavaScript viewer and newly written Python tectonic code are
 provided under `licenses/MIT.txt`. The MPL-covered GLSL sections retain MPL-2.0.
+
+The continent seeding/growth recipe (`continents.py`, written independently for
+this codebase) follows standard tectonic-planet practice; Red Blob Games'
+planet-generation notes and the World Orogen generator's ocean-land assignment
+(GPL-3.0) were used as method references only, with no code reused. The
+settings panel's tabs/overlays/regenerate layout is likewise inspired by World
+Orogen's interface; its implementation here is original.

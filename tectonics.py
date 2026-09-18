@@ -393,7 +393,7 @@ def _vector_setting(t,name,size):
     return v.copy()
 
 
-def simulate(config,initial_field,directory,progress=print):
+def simulate(config,initial_crust,directory,progress=print):
     """Forward evolution of a synthetic 1-Ga-old state to synthetic present day."""
     t=config['tectonics'];R=config['planet']['radius_metres']/1000;start=time.perf_counter()
     mesh=SphereMesh(int(t['mesh_subdivisions']),R);seed=int(config['planet']['seed']);rng=np.random.default_rng(seed+51883)
@@ -402,10 +402,9 @@ def simulate(config,initial_field,directory,progress=print):
     centres=unit(np.c_[np.sqrt(1-y*y)*np.cos(angle),y,np.sqrt(1-y*y)*np.sin(angle)]+rng.normal(0,.12,(count,3)))
     # Voronoi ONLY INITIALIZES plates; future labels are transported fractions.
     labels=np.argmax(mesh.p@centres.T,axis=1)
-    raw=initial_field(mesh.p)
-    order=np.argsort(raw);cdf=np.cumsum(mesh.area[order]);level=raw[order[np.searchsorted(cdf,cdf[-1]*(1-t['initial_continental_fraction']))]]
-    # Smooth compositional coast transition at the resolution of the coarse mesh.
-    spread=max(np.std(raw)*.045,1e-8);cont=np.clip(.5+(raw-level)/spread,0,1)
+    # Continental crust comes from grown landmass regions, never a noise field.
+    # Margins are already blended over a few mesh cells by the growth step.
+    cont=np.clip(np.asarray(initial_crust(mesh),dtype=float).ravel(),0,1)
     u=np.zeros((P,mesh.n,8),float)
     thickness=_vector_setting(t,'initial_crust_thickness_km',count)
     speeds=_vector_setting(t,'plate_speed_cm_per_year',count)
@@ -539,7 +538,7 @@ def simulate(config,initial_field,directory,progress=print):
                         transform_km_per_myr=rates[:,2],omega_rad_per_myr=omega)
     np.savez_compressed(directory/'tectonics_history.npz',unit_positions=mesh.p.astype(np.float32),**snaps)
     (directory/'tectonics_report.json').write_text(json.dumps(stats,indent=2),encoding='utf-8')
-    return mesh,values,conv,div,stats
+    return mesh,values,conv,div,stats,owner
 
 
 def validate_config(c):
@@ -550,7 +549,6 @@ def validate_config(c):
     if not 0<t['duration_myr']<=2000:raise ValueError('tectonics.duration_myr: use >0 and <=2000.')
     if not .05<=t['cfl']<=.45:raise ValueError('tectonics.cfl: use .05–.45.')
     if not 0<t['max_timestep_myr']<=10:raise ValueError('tectonics.max_timestep_myr: use >0 and <=10.')
-    if not .05<t['initial_continental_fraction']<.85:raise ValueError('initial_continental_fraction must be .05–.85.')
     for name in ('plate_speed_cm_per_year','initial_crust_thickness_km'):
         v=_vector_setting(t,name,t['plate_count'])
         if not np.isfinite(v).all() or np.min(v)<=0:raise ValueError(f'tectonics.{name}: positive finite values required.')

@@ -15,7 +15,7 @@ vec3 macroGradient(vec3 n){
 // erosion, but avoids changing the parent terrain and its gully directions.
 // The channel field is filtered the same way, so water refines in lockstep with
 // the ground instead of switching on at a fixed zoom level.
-vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint,vec3 history,float ruggedness){
+vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint,vec3 history,float ruggedness,float flowGuide){
  vec3 weights=chartWeights(n);float exact=0.,display=0.,ridge=0.,streamE=0.,streamD=0.;
  for(int chart=0;chart<3;chart++){
   float weight=weights[chart];if(weight<.0001)continue;
@@ -33,6 +33,10 @@ vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footp
    ph.zw*=-1./L_SCALE[E_IDS[k]];
    float response=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*clamp01(ruggedness*E_COLLISION_GAIN[k]+history.y*E_RIFT_GAIN[k]+history.z*E_TRANSFORM_GAIN[k]);
    float amp=E_AMPLITUDE_METRES[k]*terrainAmp*response;
+   // Iterative downstream steering: follow-only for coarse octaves
+   // (E_FLOW_INFLUENCE==0), gradually stronger toward fine detail so refined
+   // gullies are drawn into valleys that already drain to the ocean.
+   amp*=1.+E_FLOW_INFLUENCE[k]*flowGuide*2.;
    gs+=sign(ph.y)*ph.zw*amp*E_GULLY_WEIGHT[k];
    float faded=mix(f,ph.x*E_GULLY_WEIGHT[k],mask);
    float delta=(faded-.20)*amp;he+=delta;hd+=delta*vis;f=faded;
@@ -41,7 +45,8 @@ vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footp
    // Summed over steps this refines the waterway network exactly as the ground
    // does, and a step that is not displayed contributes nothing. Coarser steps
    // carve larger valleys, so their cut state dominates (see E_CUT_WEIGHT).
-   float crease=clamp01(.2-faded)*mask*E_CUT_WEIGHT[k];ce+=crease;cd+=crease*vis;
+   // Flow guidance boosts channel strength inside draining valleys.
+   float crease=clamp01(.2-faded)*mask*E_CUT_WEIGHT[k]*(1.+E_FLOW_INFLUENCE[k]*flowGuide*3.);ce+=crease;cd+=crease*vis;
    float r=mix(E_CREASE_ROUNDING[k],E_RIDGE_ROUNDING[k],clamp01(ph.x+.5));
    r*=mix(E_OLD_BELT_ROUNDING_MULTIPLIER,1.,history.x);
    float next=ease_out(smooth_start(abs(ph.y)*E_ONSET[k],r*E_ONSET[k]));
@@ -58,7 +63,7 @@ vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footp
 uvec2 riverBin(vec3 n){
  vec3 a=abs(n);int axis=a.x>a.y?(a.x>a.z?0:2):(a.y>a.z?1:2);
  int face=axis*2+(n[axis]<0.?1:0);vec2 uv=proj(n,axis)/a[axis]*.5+.5;
- ivec2 b=clamp(ivec2(uv*64.),ivec2(0),ivec2(63));b.y+=64*face;
+ ivec2 b=clamp(ivec2(uv*float(RIVER_BINS)),ivec2(0),ivec2(RIVER_BINS-1));b.y+=RIVER_BINS*face;
  return texelFetch(uRiverHeader,b,0).rg;
 }
 vec4 riverRecord(int id,int part){int i=id*3+part;return texelFetch(uRivers,ivec2(i%1023,i/1023),0);}
@@ -98,7 +103,11 @@ void main(){
  if(!locate(gl_FragCoord.xy,n,p,facing)){outGround=vec4(0);outEnvironment=vec4(0);outWater=vec4(0);return;}
  float fp=uExact?0.:uPixel/max(.09,facing);
  vec4 m=sphereMap(uMacro,n),cl=sphereMap(uClimate,n),wet=sphereMap(uWater,n);
- vec4 tect=sphereMap(uTectonics,n),crust=sphereMap(uCrust,n);
+ vec4 tect=sphereMap(uTectonics,n),crust=sphereMap(uCrust,n),flow=sphereMap(uFlow,n);
+ // Downstream guidance: accumulation + Strahler order draw fine gullies into
+ // valleys that already drain to the ocean. Distant headwaters (large flow.r)
+ // still steer; missing flow (old cache) yields guide 0 = legacy behaviour.
+ float flowGuide=clamp(flow.a*1.1+flow.b*.4,0.,1.5);
  float land=ramp(-.03,.15,m.x),rug=m.y,h=m.x,shown=h;
  vec3 g=macroGradient(n),rg=vec3(0);float rough=R_PLAIN_FRACTION+(1.-R_PLAIN_FRACTION)*rug;
  float localRelief=0.;
@@ -117,7 +126,7 @@ void main(){
   maxDrop+=E_AMPLITUDE_METRES[i]*1.2*response;
  }
  erosionAmp=min(erosionAmp,max(0.,h-.0003)/max(maxDrop,1e-5));
- vec4 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp,tect.xyz,rug);
+ vec4 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp,tect.xyz,rug,flowGuide);
  h+=er.x;shown+=er.y;
  float slope=length(g);
  float desert=(1.-ramp(.30,.70,aridity))*ramp(6.,18.,temp);
@@ -157,10 +166,12 @@ void main(){
  }
  // Waterways ride the erosion steps themselves: each displayed scale that cut a
  // gully core contributes channel water, so tributaries appear, merge and widen
- // only as fast as the ground refines around them.
+ // only as fast as the ground refines around them. In draining valleys the
+ // onset lowers with downstream guidance, so tributaries join the trunk.
  float streamCover=0.;
- if(er.w>HY_STREAM_ONSET && land>.05 && shown>-.001){
-  streamCover=ramp(HY_STREAM_ONSET,HY_STREAM_ONSET+HY_STREAM_SOFTNESS,er.w);
+ float onsetEff=max(0.,HY_STREAM_ONSET-.15*HY_FLOW_GAIN*clamp(flowGuide,0.,1.5));
+ if(er.w>onsetEff && land>.05 && shown>-.001){
+  streamCover=ramp(onsetEff,onsetEff+HY_STREAM_SOFTNESS,er.w);
   riverCover=max(riverCover,streamCover);freshwater=max(freshwater,streamCover);
  }
  temp=cl.x-LAPSE*max(0.,h);
