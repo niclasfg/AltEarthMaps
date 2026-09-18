@@ -112,7 +112,7 @@ function normalizeAssociates(e,n){
 let instantTimer=null;
 function persistInstant(e){
  clearTimeout(instantTimer);
- instantTimer=setTimeout(async()=>{try{await api('POST','/api/settings',{settings:{viewer:{[e.key]:getP(e.section,e.key)}}}));server=await api('GET','/api/settings');}catch(err){showError(String(err.message||err));}},900);
+ instantTimer=setTimeout(async()=>{try{await api('POST','/api/settings',{settings:{viewer:{[e.key]:getP(e.section,e.key)}}});server=await api('GET','/api/settings');}catch(err){showError(String(err.message||err));}},900);
 }
 function preview(e,v){
  setP(e.section,e.key,v);
