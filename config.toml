@@ -6,7 +6,7 @@
 # Tectonics run once and are cached; zooming never reruns a billion years.
 
 [viewer]
-port = 8770
+port = 8771
 open_browser = true
 start_longitude_degrees = 72.158203125
 start_latitude_degrees = 14.501953125
@@ -18,7 +18,7 @@ settle_ms = 170
 supersampling = 1                 # 1 or 2. 2 evaluates four times as many pixels.
 
 [planet]
-seed = 1977
+seed = 1971
 radius_metres = 6371000.0         # Spherical mean Earth radius, not an ellipsoid.
 # Present land fraction is an OUTPUT, not re-thresholded after evolution.
 # Fixed water inventory; sea level is solved from available basin volume.
@@ -27,7 +27,7 @@ ocean_volume_km3 = 1350000000.0
 map_width = 2048                  # Global guide: width x width/2; NOT final resolution.
 # Shared crust fields make continents; plate polygons NEVER each become islands.
 continent_wavelength_metres = [16000000, 8000000, 4000000, 2000000, 1000000, 450000, 180000]
-continent_amplitude = [0.5, 0.75, 0.70, 0.35, 0.12, 0.04, 0.008]
+continent_amplitude = [0.7, 0.6, 0.8, 0.55, 0.19, 0.04, 0.008]
 
 [tectonics]
 # FORWARD simulation of a synthetic planet from 1,000 Ma to the present.
@@ -39,12 +39,12 @@ mesh_subdivisions = 5             # 4: 2,562 cells; 5: 10,242; 6: 40,962.
 # Mesh 5 resolves regional tectonics (~223 km), not individual mountain peaks.
 # The fine terrain shaders still go down to metre scale, conditionally on it.
 max_timestep_myr = 2.0            # Actual step is reduced to satisfy the CFL limit.
-cfl = 0.40                       # 0.1–0.45; smaller is slower, not more detail.
-plate_count = 18
+cfl = 0.30                       # 0.1–0.45; smaller is slower, not more detail.
+plate_count = 12
 # One entry broadcasts; otherwise one per INITIAL plate. Units are cm/year.
 # 1 cm/year = 10 km/Myr. Subsequent rifts inherit their parent's properties.
-plate_speed_cm_per_year = [4.0, 3.0, 5.5, 2.0, 6.0, 3.5, 4.5, 2.5, 5.0, 3.0, 6.5, 2.0, 3.5, 5.0, 4.0, 2.5, 5.5, 3.0]
-initial_crust_thickness_km = [35.0, 38.0, 33.0, 36.0, 37.0, 34.0, 39.0, 35.0, 32.0, 36.0, 35.0, 37.0, 34.0, 36.0, 38.0, 35.0, 33.0, 37.0]
+plate_speed_cm_per_year = [4.0, 3.0, 5.5, 2.0, 6.0, 3.5, 4.5, 2.5, 5.0, 3.0, 6.5, 2.0]
+initial_crust_thickness_km = [35.0, 38.0, 33.0, 36.0, 37.0, 34.0, 39.0, 35.0, 32.0, 36.0, 35.0, 37.0]
 initial_continental_fraction = 0.40 # Includes submerged continental margins.
 initial_ocean_age_myr = [5.0, 160.0]
 # Smooth, prescribed changes in motion; not forces derived from mantle flow.
@@ -74,9 +74,9 @@ reference_continent_elevation_metres = 650.0
 # Oceanic subsidence follows a finite-thickness conductive plate-cooling series.
 thermal_plate_thickness_km = 125.0
 thermal_diffusivity_km2_per_myr = 31.5576 # Equivalent to 1e-6 m²/s.
-ridge_depth_metres = 2600.0
+ridge_depth_metres = 3600.0
 thermal_subsidence_metres = 3400.0
-trench_depth_metres = 2200.0
+trench_depth_metres = 3200.0
 boundary_reference_speed_cm_per_year = 5.0
 # Magmatic addition is a parameterized fraction of consumed ocean-crust volume.
 # Its volume is logged separately; this is not a thermochemical melting model.
@@ -94,7 +94,7 @@ root_relaxation_thickness_power = 3.0
 compression_memory_myr = 420.0
 extension_memory_myr = 180.0
 shear_memory_myr = 220.0
-compression_mask_strain = 0.22
+compression_mask_strain = 0.27
 extension_mask_strain = 0.18
 shear_mask_strain = 0.7
 deformation_width_km = 200.0
@@ -121,6 +121,17 @@ river_source_area_km2 = 35000.0     # Coarse major rivers, NOT local metre tribu
 width_coefficient_metres = 0.8    # Half-width = coefficient * sqrt(area in km²).
 maximum_half_width_metres = 1600.0
 valley_width_metres = 14000.0
+# Fine waterways are NOT raster-routed. They ride the shader's erosion steps:
+# each displayed step that cuts a gully core carries surface water at that
+# scale, so tributaries appear, merge and widen exactly as the ground refines.
+# Onset/softness are in accumulated cut-state units: the coarsest erosion step
+# contributes up to about 1 where it carves a gully core, finer steps add less
+# (weight (amplitude/coarsest)^0.3) and a flat tile contributes zero.
+gully_stream_onset = 0.20         # Channel strength where water starts to appear.
+gully_stream_softness = 0.30      # Ramp width above the onset.
+# The baked routing skeleton remains the global trunk; its water fades in on
+# this footprint schedule instead of switching on at one fixed zoom level.
+trunk_display_wavelength_metres = 24000.0
 lake_minimum_depth_metres = 25.0
 lake_maximum_depth_metres = 500.0
 # Lakes are spill-level depressions in the global guide, not seeded circular bowls.

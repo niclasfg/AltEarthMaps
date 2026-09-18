@@ -13,15 +13,17 @@ vec3 macroGradient(vec3 n){
 // Full recurrence state never depends on pixel footprint. A separate accumulated
 // height is filtered for display. This isn't exact integration of nonlinear
 // erosion, but avoids changing the parent terrain and its gully directions.
-vec3 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint,vec3 history,float ruggedness){
- vec3 weights=chartWeights(n);float exact=0.,display=0.,ridge=0.;
+// The channel field is filtered the same way, so water refines in lockstep with
+// the ground instead of switching on at a fixed zoom level.
+vec4 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footprint,vec3 history,float ruggedness){
+ vec3 weights=chartWeights(n);float exact=0.,display=0.,ridge=0.,streamE=0.,streamD=0.;
  for(int chart=0;chart<3;chart++){
   float weight=weights[chart];if(weight<.0001)continue;
   float nr=n[chart];vec2 g0=proj(inputSlope,chart)-inputSlope[chart]*proj(n,chart)/nr;
   float slope=max(length(g0),1e-10);vec2 gs=safe_normalize(g0)*E_ASSUMED_SLOPE;
   float f=fade,rounding=mix(E_CREASE_ROUNDING[0],E_RIDGE_ROUNDING[0],clamp01(f+.5))*E_INITIAL_ROUNDING_MULTIPLIER;
   float mask=ease_out(smooth_start(slope*1.25,rounding*1.25));
-  float rm=ease_out(slope*2.8),rf=fade,he=0.,hd=0.;
+  float rm=ease_out(slope*2.8),rf=fade,he=0.,hd=0.,ce=0.,cd=0.;
   for(int k=0;k<E_N;k++){
    // At an unresolved scale the displayed contribution vanishes, but we retain
    // every ancestor needed by later scales. Exact queries always run all levels.
@@ -34,15 +36,21 @@ vec3 erode(vec3 p,vec3 n,vec3 inputSlope,float fade,float terrainAmp,float footp
    gs+=sign(ph.y)*ph.zw*amp*E_GULLY_WEIGHT[k];
    float faded=mix(f,ph.x*E_GULLY_WEIGHT[k],mask);
    float delta=(faded-.20)*amp;he+=delta;hd+=delta*vis;f=faded;
+   // Channels ride the SAME steps as the terrain: a displayed scale that is
+   // carving a gully core marks water there, weighted by how hard it cuts.
+   // Summed over steps this refines the waterway network exactly as the ground
+   // does, and a step that is not displayed contributes nothing. Coarser steps
+   // carve larger valleys, so their cut state dominates (see E_CUT_WEIGHT).
+   float crease=clamp01(.2-faded)*mask*E_CUT_WEIGHT[k];ce+=crease;cd+=crease*vis;
    float r=mix(E_CREASE_ROUNDING[k],E_RIDGE_ROUNDING[k],clamp01(ph.x+.5));
    r*=mix(E_OLD_BELT_ROUNDING_MULTIPLIER,1.,history.x);
    float next=ease_out(smooth_start(abs(ph.y)*E_ONSET[k],r*E_ONSET[k]));
    mask=(1.-pow(1.-clamp01(mask),E_DETAIL[k]))*next;
    rf=mix(rf,ph.x,rm);rm*=ease_out(abs(ph.y)*1.5);
   }
-  exact+=he*weight;display+=hd*weight;ridge+=rf*(1.-rm)*weight;
+  exact+=he*weight;display+=hd*weight;ridge+=rf*(1.-rm)*weight;streamE+=ce*weight;streamD+=cd*weight;
  }
- return vec3(exact,display,ridge);
+ return vec4(exact,display,ridge,uExact?streamE:streamD);
 }
 
 // Cube-face spatial lookup for the vector river skeleton. Every bin contains
@@ -109,7 +117,7 @@ void main(){
   maxDrop+=E_AMPLITUDE_METRES[i]*1.2*response;
  }
  erosionAmp=min(erosionAmp,max(0.,h-.0003)/max(maxDrop,1e-5));
- vec3 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp,tect.xyz,rug);
+ vec4 er=erode(p,n,g,clamp(localRelief/max(.05,rough),-1.,1.),erosionAmp,fp,tect.xyz,rug);
  h+=er.x;shown+=er.y;
  float slope=length(g);
  float desert=(1.-ramp(.30,.70,aridity))*ramp(6.,18.,temp);
@@ -132,17 +140,28 @@ void main(){
   surface=wet.x;freshwater=lakePresence;
  }
  // Only evaluate vector reaches on land and where they can affect the image.
+ // The baked skeleton supplies the global trunk; its water now fades in on the
+ // same footprint schedule as the refined layers instead of one hard zoom gate.
  float riverCover=0.;
  if(land>.05 && (uExact||fp<10.)){
   vec4 rv=river(n,fp);
   if(rv.x<rv.w && rv.w>0.){
+   float tv=uExact?1.:footprintWeight(HY_TRUNK_WAVELENGTH,fp);
    float d=max(0.,rv.x),influence=1.-ramp(0.,rv.w,d);
    float target=rv.y-.003 + pow(d/max(rv.w,.001),1.6)*max(.015,m.x-rv.y);
    h=mix(h,min(h,target),influence);shown=mix(shown,min(shown,target),influence);
-   riverCover=1.-ramp(-max(fp*.6,.0005),max(fp*.6,.0005),rv.x);
+   riverCover=(1.-ramp(-max(fp*.6,.0005),max(fp*.6,.0005),rv.x))*tv;
    if(rv.x<0.){h=min(h,rv.y-.003);shown=min(shown,rv.y-.003);}
-   if(riverCover>0.){surface=max(surface,rv.y);freshwater=max(freshwater,riverCover);}
+   if(riverCover>0.){surface=max(surface,mix(shown,rv.y,tv));freshwater=max(freshwater,riverCover);}
   }
+ }
+ // Waterways ride the erosion steps themselves: each displayed scale that cut a
+ // gully core contributes channel water, so tributaries appear, merge and widen
+ // only as fast as the ground refines around them.
+ float streamCover=0.;
+ if(er.w>HY_STREAM_ONSET && land>.05 && shown>-.001){
+  streamCover=ramp(HY_STREAM_ONSET,HY_STREAM_ONSET+HY_STREAM_SOFTNESS,er.w);
+  riverCover=max(riverCover,streamCover);freshwater=max(freshwater,streamCover);
  }
  temp=cl.x-LAPSE*max(0.,h);
  float trees=ramp(1.,10.,temp)*ramp(.4,1.25,aridity)*(1.-ramp(tan(radians(EC_TREE_SLOPE_DEGREES.x)),tan(radians(EC_TREE_SLOPE_DEGREES.y)),slope))*land;

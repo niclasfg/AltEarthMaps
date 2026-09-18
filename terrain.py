@@ -38,6 +38,11 @@ def checked_config():
         v=c[s][k]
         if v not in (256,512,1024,2048,4096):raise ValueError(f'{s}.{k}: use 256,512,1024,2048 or 4096.')
     if c['planet']['map_width']%c['hydrology']['routing_width']:raise ValueError('routing_width must divide map_width.')
+    hy=c['hydrology'];steps=len(c['erosion']['wavelength_metres'])
+    if not all(isinstance(hy[k],(int,float)) and not isinstance(hy[k],bool) and math.isfinite(hy[k]) for k in ('gully_stream_onset','gully_stream_softness','trunk_display_wavelength_metres')):raise ValueError('hydrology: finite numbers required for the stream settings.')
+    if not 0<=hy['gully_stream_onset']<=steps:raise ValueError(f'gully_stream_onset must be 0–{steps} (one unit per displayed erosion step).')
+    if not 0<hy['gully_stream_softness']<=steps:raise ValueError(f'gully_stream_softness must be above 0 and at most {steps}.')
+    if not 1000<=hy['trunk_display_wavelength_metres']<=400000:raise ValueError('trunk_display_wavelength_metres must be between 1 km and 400 km.')
     if c['viewer']['supersampling'] not in (1,2):raise ValueError('supersampling must be 1 or 2.')
     if not 256<=c['viewer']['max_render_width']<=3840:raise ValueError('max_render_width must be 256–3840.')
     for k in ('normalization','cell_scale'):
@@ -61,6 +66,12 @@ def bundle(c,meta):
     for s,pref in [('relief','R'),('erosion','E'),('dunes','D')]:
         a=c[s];lines.append(f'#define {pref}_N {len(a["wavelength_metres"])}')
         arr(pref+'_IDS',[add(w*(a['cell_scale'][i] if s=='erosion' else 1)) for i,w in enumerate(a['wavelength_metres'])],'int')
+        if s=='erosion':
+            # Cut-state weight per erosion step for the refined waterways: the
+            # coarsest step (largest amplitude) counts fully, finer steps add
+            # detail without letting their noise dominate the channel network.
+            a0=a['amplitude_metres'][0]
+            arr('E_CUT_WEIGHT',[(x/a0)**.3 for x in a['amplitude_metres']])
         for k,v in a.items():
             if isinstance(v,list):arr(pref+'_'+k.upper(),[x/1000 if k.endswith('_metres') else x for x in v])
             else:define(pref+'_'+k.upper(),v)
@@ -71,6 +82,9 @@ def bundle(c,meta):
     for k,v in a.items():
         if not isinstance(v,list) or k not in ('surface_colour_strength','surface_wavelength_metres'):define('A_'+k.upper(),v/1000 if k.endswith('_metres') else v)
     for k,v in c['ecology'].items():define('EC_'+k.upper(),v)
+    hy=c['hydrology']
+    define('HY_STREAM_ONSET',hy['gully_stream_onset']);define('HY_STREAM_SOFTNESS',hy['gully_stream_softness'])
+    define('HY_TRUNK_WAVELENGTH',hy['trunk_display_wavelength_metres']/1000)
     define('RADIUS',c['planet']['radius_metres']/1000);define('LAPSE',c['climate']['lapse_c_per_km'])
     lines.append(f'const uint WORLD_SEED={int(c["planet"]["seed"])&0xffffffff}u;')
     lines.append(f'#define MAX_RIVER_BIN {max(1,int(meta["max_bin"]))}')
